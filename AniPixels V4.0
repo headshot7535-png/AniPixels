@@ -1,0 +1,1630 @@
+-- ============================================================
+--  ANIPIXELS GUI  v4.0  |  Tabbed · Polished · Auto Merge
+-- ============================================================
+local Players          = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+local TweenService     = game:GetService("TweenService")
+local VirtualUser      = game:GetService("VirtualUser")
+local Lighting         = game:GetService("Lighting")
+local LP               = Players.LocalPlayer
+local function getChar()  return LP.Character end
+local function getHuman() local c=getChar() return c and c:FindFirstChildOfClass("Humanoid") end
+local function getRoot()  local c=getChar() return c and c:FindFirstChild("HumanoidRootPart") end
+
+-- destroy old
+if LP.PlayerGui:FindFirstChild("AniPixelsGUI") then LP.PlayerGui.AniPixelsGUI:Destroy() end
+
+-- ============================================================
+--  STATE
+-- ============================================================
+local states = {
+    infJump=false, noclip=false, godMode=false, fly=false,
+    antiAfk=false, fullBright=false, esp=false,
+    autoBoros=false, autoZamasu=false, autoSukuna=false,
+    autoAllForOne=false, autoDioHeaven=false, autoMadara=false,
+    mergeActive=false,
+    farmNoTP=false, farmActive=false,
+}
+local walkSpeed   = 16
+local flyBV, flyBG
+local espBillboards = {}
+local autoFightDelay = 1.5
+-- merge
+local mergeThreshold  = 20   -- merge when count hits this
+local mergeTargetBase = ""   -- legacy single (unused)
+local mergeTargets    = {}   -- multi-select: set of base names
+-- farm
+local farmTargets   = {}   -- set of campaign model names to farm
+local farmTeam      = {}   -- current active squad {["1"]=name,...}
+local savedTeams    = {}   -- name -> {["1"]=name,...}
+local farmTeamName  = ""   -- active saved team name
+
+-- upgrade chain: base -> Giant X -> Mega X -> Titan X
+local function getTierName(base, tier)
+    if tier == 0 then return base end
+    if tier == 1 then return "Giant "..base end
+    if tier == 2 then return "Mega "..base end
+    if tier == 3 then return "Titan "..base end
+    return base
+end
+
+-- ============================================================
+--  SETTINGS
+-- ============================================================
+local SETTINGS_FILE = "anipixels_settings.json"
+
+local function encodeSettings()
+    local t = {}
+    for k,v in pairs(states) do t[#t+1]='"'..k..'":'..(v and"true"or"false") end
+    t[#t+1]='"walkSpeed":'..walkSpeed
+    t[#t+1]='"autoFightDelay":'..autoFightDelay
+    t[#t+1]='"mergeThreshold":'..mergeThreshold
+    t[#t+1]='"mergeTargetBase":"'..mergeTargetBase..'"'
+    -- farm targets
+    local ftnames={}
+    for n,_ in pairs(farmTargets) do ftnames[#ftnames+1]=n end
+    t[#t+1]='"farmTargets":"'..table.concat(ftnames,",")..'"'
+    -- saved teams: flat keys "Raid_1".."PVP_4"
+    local presetKeys={"Raid","Farm","Trials","PVP"}
+    for _,pk in ipairs(presetKeys) do
+        local slots=savedTeams[pk] or {["1"]="",["2"]="",["3"]="",["4"]=""}
+        for si=1,4 do
+            local v=(slots[tostring(si)] or ""):gsub('"',"'")
+            t[#t+1]='"'..pk..'_'..si..'":"'..v..'"'
+        end
+    end
+    t[#t+1]='"farmTeamName":"'..farmTeamName..'"' 
+    t[#t+1]='"farmNoTP":'.. (states.farmNoTP and "true" or "false")
+    local tnames={}
+    for n,_ in pairs(mergeTargets) do tnames[#tnames+1]=n end
+    t[#t+1]='"mergeTargets":"'..table.concat(tnames,",")..'"'
+    return "{"..table.concat(t,",").."}"
+end
+local function saveSettings()
+    pcall(function() writefile(SETTINGS_FILE, encodeSettings()) end)
+end
+local function parseJSON(s)
+    local t={}
+    for k,v in s:gmatch('"([^"]+)":%s*([%w%.%-]+)') do
+        if v=="true" then t[k]=true elseif v=="false" then t[k]=false else t[k]=tonumber(v) end
+    end
+    for k,v in s:gmatch('"([^"]+)":%s*"([^"]*)"') do t[k]=v end
+    return t
+end
+local LS={}
+pcall(function()
+    if isfile(SETTINGS_FILE) then
+        local raw=readfile(SETTINGS_FILE)
+        -- migrate old ;;/@@@/savedTeams formats: strip them so we use new flat keys
+        raw=raw:gsub('"savedTeams":"[^"]*"','')
+        LS=parseJSON(raw)
+    end
+end)
+for k,v in pairs(LS) do if states[k]~=nil then states[k]=v end end
+if LS.walkSpeed      then walkSpeed=LS.walkSpeed end
+if LS.autoFightDelay then autoFightDelay=LS.autoFightDelay end
+if LS.mergeThreshold then mergeThreshold=LS.mergeThreshold end
+if LS.mergeTargetBase then mergeTargetBase=LS.mergeTargetBase end
+if LS.mergeTargets then
+    for name in (LS.mergeTargets..","):gmatch("([^,]+),") do
+        mergeTargets[name]=true
+    end
+end
+if LS.farmTargets then
+    for name in (LS.farmTargets..","):gmatch("([^,]+),") do
+        farmTargets[name]=true
+    end
+end
+-- load preset teams from flat keys
+do
+    local presetKeys={"Raid","Farm","Trials","PVP"}
+    for _,pk in ipairs(presetKeys) do
+        local s1=LS[pk.."_1"] or ""; local s2=LS[pk.."_2"] or ""
+        local s3=LS[pk.."_3"] or ""; local s4=LS[pk.."_4"] or ""
+        if s1~="" or s2~="" or s3~="" or s4~="" then
+            savedTeams[pk]={["1"]=s1,["2"]=s2,["3"]=s3,["4"]=s4}
+        end
+    end
+end
+if LS.farmTeamName then farmTeamName=LS.farmTeamName end
+-- restore farmTeam from saved Farm preset if exists
+if savedTeams["Farm"] then farmTeam=savedTeams["Farm"] end
+
+-- ============================================================
+--  THEME
+-- ============================================================
+local C = {
+    bg      = Color3.fromRGB(8,10,18),
+    panel   = Color3.fromRGB(12,15,26),
+    card    = Color3.fromRGB(15,19,32),
+    border  = Color3.fromRGB(25,35,60),
+    accent  = Color3.fromRGB(0,180,255),
+    accentD = Color3.fromRGB(0,100,180),
+    text    = Color3.fromRGB(210,225,245),
+    sub     = Color3.fromRGB(60,80,120),
+    green   = Color3.fromRGB(0,200,100),
+    purple  = Color3.fromRGB(160,80,255),
+    purpleD = Color3.fromRGB(80,30,160),
+    red     = Color3.fromRGB(255,70,70),
+    orange  = Color3.fromRGB(255,160,30),
+    gold    = Color3.fromRGB(255,210,50),
+}
+
+-- ============================================================
+--  ROOT GUI
+-- ============================================================
+local ScreenGui=Instance.new("ScreenGui")
+ScreenGui.Name="AniPixelsGUI"; ScreenGui.ResetOnSpawn=false
+ScreenGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent=LP.PlayerGui
+
+local W,H=360,620
+local Main=Instance.new("Frame",ScreenGui)
+Main.Name="Main"; Main.Size=UDim2.new(0,W,0,H)
+Main.Position=UDim2.new(0.5,-W/2,0.5,-H/2)
+Main.BackgroundColor3=C.bg; Main.BorderSizePixel=0
+Main.Active=true; Main.Draggable=true; Main.ClipsDescendants=true
+Instance.new("UICorner",Main).CornerRadius=UDim.new(0,14)
+local mStroke=Instance.new("UIStroke",Main)
+mStroke.Color=C.accent; mStroke.Thickness=1.5; mStroke.Transparency=0.6
+
+-- glow bar top
+local GlowBar=Instance.new("Frame",Main)
+GlowBar.Size=UDim2.new(1,0,0,2); GlowBar.BackgroundColor3=C.accent; GlowBar.BorderSizePixel=0; GlowBar.ZIndex=10
+Instance.new("UIGradient",GlowBar).Color=ColorSequence.new{
+    ColorSequenceKeypoint.new(0,Color3.fromRGB(0,80,255)),
+    ColorSequenceKeypoint.new(0.5,C.accent),
+    ColorSequenceKeypoint.new(1,Color3.fromRGB(0,80,255)),
+}
+
+-- ── Title Bar ─────────────────────────────────────────────────
+local TBar=Instance.new("Frame",Main)
+TBar.Size=UDim2.new(1,0,0,48); TBar.Position=UDim2.new(0,0,0,2)
+TBar.BackgroundColor3=C.panel; TBar.BorderSizePixel=0
+
+local TFix=Instance.new("Frame",TBar)
+TFix.Size=UDim2.new(1,0,0,8); TFix.Position=UDim2.new(0,0,1,-8)
+TFix.BackgroundColor3=C.panel; TFix.BorderSizePixel=0
+
+local TIcon=Instance.new("TextLabel",TBar)
+TIcon.Text="⚡"; TIcon.Size=UDim2.new(0,32,0,32); TIcon.Position=UDim2.new(0,14,0.5,-16)
+TIcon.BackgroundTransparency=1; TIcon.TextColor3=C.accent
+TIcon.Font=Enum.Font.GothamBold; TIcon.TextSize=22
+
+local TTitle=Instance.new("TextLabel",TBar)
+TTitle.Text="ANIPIXELS"; TTitle.Size=UDim2.new(0,140,0,20); TTitle.Position=UDim2.new(0,50,0,8)
+TTitle.BackgroundTransparency=1; TTitle.TextColor3=C.accent
+TTitle.Font=Enum.Font.GothamBold; TTitle.TextSize=15; TTitle.TextXAlignment=Enum.TextXAlignment.Left
+
+local TSub=Instance.new("TextLabel",TBar)
+TSub.Text="Universal Script · v4.0"; TSub.Size=UDim2.new(0,200,0,13); TSub.Position=UDim2.new(0,50,0,29)
+TSub.BackgroundTransparency=1; TSub.TextColor3=C.sub
+TSub.Font=Enum.Font.Gotham; TSub.TextSize=9; TSub.TextXAlignment=Enum.TextXAlignment.Left
+
+local XBtn=Instance.new("TextButton",TBar)
+XBtn.Text="✕"; XBtn.Size=UDim2.new(0,28,0,28); XBtn.Position=UDim2.new(1,-38,0.5,-14)
+XBtn.BackgroundColor3=Color3.fromRGB(140,25,35); XBtn.TextColor3=Color3.fromRGB(255,255,255)
+XBtn.Font=Enum.Font.GothamBold; XBtn.TextSize=13; XBtn.BorderSizePixel=0
+Instance.new("UICorner",XBtn).CornerRadius=UDim.new(0,7)
+XBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+
+-- ── Tab Bar ───────────────────────────────────────────────────
+local TabBar=Instance.new("Frame",Main)
+TabBar.Size=UDim2.new(1,-20,0,34); TabBar.Position=UDim2.new(0,10,0,52)
+TabBar.BackgroundColor3=C.card; TabBar.BorderSizePixel=0
+Instance.new("UICorner",TabBar).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",TabBar).Color=C.border
+
+local TabLayout=Instance.new("UIListLayout",TabBar)
+TabLayout.FillDirection=Enum.FillDirection.Horizontal
+TabLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
+TabLayout.VerticalAlignment=Enum.VerticalAlignment.Center
+TabLayout.Padding=UDim.new(0,4)
+Instance.new("UIPadding",TabBar).PaddingLeft=UDim.new(0,4)
+
+-- ── Content area ─────────────────────────────────────────────
+local ContentOuter=Instance.new("Frame",Main)
+ContentOuter.Size=UDim2.new(1,-20,1,-108); ContentOuter.Position=UDim2.new(0,10,0,92)
+ContentOuter.BackgroundTransparency=1; ContentOuter.BorderSizePixel=0
+ContentOuter.ClipsDescendants=true
+
+-- ── Status bar ───────────────────────────────────────────────
+local StatusBar=Instance.new("Frame",Main)
+StatusBar.Size=UDim2.new(1,0,0,20); StatusBar.Position=UDim2.new(0,0,1,-20)
+StatusBar.BackgroundColor3=Color3.fromRGB(5,6,12); StatusBar.BorderSizePixel=0; StatusBar.ZIndex=5
+
+local SDot=Instance.new("Frame",StatusBar)
+SDot.Size=UDim2.new(0,5,0,5); SDot.Position=UDim2.new(0,10,0.5,-2.5)
+SDot.BackgroundColor3=C.accent; SDot.BorderSizePixel=0; SDot.ZIndex=6
+Instance.new("UICorner",SDot).CornerRadius=UDim.new(1,0)
+
+local SLbl=Instance.new("TextLabel",StatusBar)
+SLbl.Text="Ready"; SLbl.Size=UDim2.new(1,-22,1,0); SLbl.Position=UDim2.new(0,20,0,0)
+SLbl.BackgroundTransparency=1; SLbl.TextColor3=C.sub
+SLbl.Font=Enum.Font.Code; SLbl.TextSize=9; SLbl.TextXAlignment=Enum.TextXAlignment.Left; SLbl.ZIndex=6
+
+-- ============================================================
+--  TAB SYSTEM
+-- ============================================================
+local tabs = {}         -- name -> {btn, page}
+local activeTab = nil
+
+local tabDefs = {
+    {"⚙️","Features"},
+    {"⚔️","Bosses"},
+    {"🔀","Merge"},
+}
+
+local function switchTab(name)
+    activeTab = name
+    for tname, td in pairs(tabs) do
+        local on = (tname==name)
+        if on then
+            td.btn.BackgroundColor3=C.accent
+            td.btn.TextColor3=Color3.fromRGB(255,255,255)
+        else
+            td.btn.BackgroundColor3=Color3.fromRGB(0,0,0,0)
+            td.btn.TextColor3=C.sub
+            td.btn.BackgroundTransparency=1
+        end
+        td.page.Visible=on
+    end
+end
+
+local function makeTabBtn(icon, name)
+    local btn=Instance.new("TextButton",TabBar)
+    btn.Text=icon.." "..name; btn.Size=UDim2.new(0,76,0,26)
+    btn.BackgroundTransparency=1; btn.TextColor3=C.sub
+    btn.Font=Enum.Font.GothamBold; btn.TextSize=10; btn.BorderSizePixel=0
+    Instance.new("UICorner",btn).CornerRadius=UDim.new(0,7)
+    local page=Instance.new("ScrollingFrame",ContentOuter)
+    page.Size=UDim2.new(1,0,1,0); page.BackgroundTransparency=1
+    page.BorderSizePixel=0; page.ScrollBarThickness=3
+    page.ScrollBarImageColor3=C.accent; page.Visible=false
+    page.AutomaticCanvasSize=Enum.AutomaticSize.Y; page.CanvasSize=UDim2.new(0,0,0,0)
+    local layout=Instance.new("UIListLayout",page)
+    layout.Padding=UDim.new(0,6); layout.SortOrder=Enum.SortOrder.LayoutOrder
+    layout.HorizontalAlignment=Enum.HorizontalAlignment.Center
+    Instance.new("UIPadding",page).PaddingTop=UDim.new(0,8)
+    tabs[name]={btn=btn, page=page, layout=layout}
+    btn.MouseButton1Click:Connect(function() switchTab(name) end)
+    return page
+end
+
+local PFeatures = makeTabBtn("⚙️","Features")
+local PBosses   = makeTabBtn("⚔️","Bosses")
+local PMerge    = makeTabBtn("🔀","Merge")
+local PFarm     = makeTabBtn("🌾","Farm")
+
+-- ============================================================
+--  REUSABLE COMPONENTS
+-- ============================================================
+local function SectionLabel(parent, txt, order)
+    local f=Instance.new("Frame",parent)
+    f.Size=UDim2.new(1,-10,0,16); f.BackgroundTransparency=1; f.LayoutOrder=order
+    local line=Instance.new("Frame",f)
+    line.Size=UDim2.new(1,0,0,1); line.Position=UDim2.new(0,0,0.5,0)
+    line.BackgroundColor3=C.border; line.BorderSizePixel=0
+    local bg=Instance.new("Frame",f)
+    bg.Size=UDim2.new(0,0,1,0); bg.AutomaticSize=Enum.AutomaticSize.X
+    bg.Position=UDim2.new(0,8,0,0); bg.BackgroundColor3=C.bg; bg.BorderSizePixel=0
+    Instance.new("UIPadding",bg).PaddingLeft=UDim.new(0,6)
+    local lbl=Instance.new("TextLabel",bg)
+    lbl.Text=txt:upper(); lbl.Size=UDim2.new(0,0,1,0); lbl.AutomaticSize=Enum.AutomaticSize.X
+    lbl.BackgroundTransparency=1; lbl.TextColor3=C.sub
+    lbl.Font=Enum.Font.GothamBold; lbl.TextSize=9
+end
+
+-- Pill toggle card
+local function MakeToggleCard(parent, icon, label, desc, order, key, onCb, offCb)
+    local Card=Instance.new("Frame",parent)
+    Card.Size=UDim2.new(1,-10,0,52); Card.BackgroundColor3=C.card
+    Card.BorderSizePixel=0; Card.LayoutOrder=order
+    Instance.new("UICorner",Card).CornerRadius=UDim.new(0,10)
+    local cs=Instance.new("UIStroke",Card); cs.Color=C.border; cs.Thickness=1
+
+    local iL=Instance.new("TextLabel",Card)
+    iL.Text=icon; iL.Size=UDim2.new(0,38,1,0); iL.Position=UDim2.new(0,6,0,0)
+    iL.BackgroundTransparency=1; iL.TextSize=20; iL.Font=Enum.Font.GothamBold
+    iL.TextXAlignment=Enum.TextXAlignment.Center
+
+    local nL=Instance.new("TextLabel",Card)
+    nL.Text=label; nL.Size=UDim2.new(1,-130,0,18); nL.Position=UDim2.new(0,48,0,8)
+    nL.BackgroundTransparency=1; nL.TextColor3=C.text
+    nL.Font=Enum.Font.GothamBold; nL.TextSize=12; nL.TextXAlignment=Enum.TextXAlignment.Left
+
+    local dL=Instance.new("TextLabel",Card)
+    dL.Text=desc; dL.Size=UDim2.new(1,-130,0,14); dL.Position=UDim2.new(0,48,0,28)
+    dL.BackgroundTransparency=1; dL.TextColor3=C.sub
+    dL.Font=Enum.Font.Gotham; dL.TextSize=9; dL.TextXAlignment=Enum.TextXAlignment.Left
+
+    local badge=Instance.new("TextLabel",Card)
+    badge.Text="OFF"; badge.Size=UDim2.new(0,34,0,17); badge.Position=UDim2.new(1,-88,0.5,-8)
+    badge.BackgroundColor3=C.panel; badge.TextColor3=C.sub
+    badge.Font=Enum.Font.GothamBold; badge.TextSize=9; badge.BorderSizePixel=0
+    Instance.new("UICorner",badge).CornerRadius=UDim.new(0,5)
+
+    local Pill=Instance.new("Frame",Card)
+    Pill.Size=UDim2.new(0,44,0,24); Pill.Position=UDim2.new(1,-50,0.5,-12)
+    Pill.BackgroundColor3=C.border; Pill.BorderSizePixel=0
+    Instance.new("UICorner",Pill).CornerRadius=UDim.new(1,0)
+
+    local Thumb=Instance.new("Frame",Pill)
+    Thumb.Size=UDim2.new(0,18,0,18); Thumb.Position=UDim2.new(0,3,0.5,-9)
+    Thumb.BackgroundColor3=C.sub; Thumb.BorderSizePixel=0
+    Instance.new("UICorner",Thumb).CornerRadius=UDim.new(1,0)
+
+    local ti=TweenInfo.new(0.18,Enum.EasingStyle.Quad)
+    local function setState(on)
+        states[key]=on; saveSettings()
+        if on then
+            TweenService:Create(Pill, ti,{BackgroundColor3=C.accentD}):Play()
+            TweenService:Create(Thumb,ti,{Position=UDim2.new(0,23,0.5,-9),BackgroundColor3=C.accent}):Play()
+            cs.Color=C.accentD; badge.Text="ON"; badge.TextColor3=C.accent; badge.BackgroundColor3=Color3.fromRGB(0,30,55)
+            if onCb then onCb() end
+        else
+            TweenService:Create(Pill, ti,{BackgroundColor3=C.border}):Play()
+            TweenService:Create(Thumb,ti,{Position=UDim2.new(0,3,0.5,-9),BackgroundColor3=C.sub}):Play()
+            cs.Color=C.border; badge.Text="OFF"; badge.TextColor3=C.sub; badge.BackgroundColor3=C.panel
+            if offCb then offCb() end
+        end
+    end
+
+    local Btn=Instance.new("TextButton",Card)
+    Btn.Size=UDim2.new(1,0,1,0); Btn.BackgroundTransparency=1; Btn.Text=""; Btn.ZIndex=3
+    Btn.MouseButton1Click:Connect(function() setState(not states[key]) end)
+
+    if states[key] then
+        Pill.BackgroundColor3=C.accentD; Thumb.Position=UDim2.new(0,23,0.5,-9)
+        Thumb.BackgroundColor3=C.accent; cs.Color=C.accentD
+        badge.Text="ON"; badge.TextColor3=C.accent; badge.BackgroundColor3=Color3.fromRGB(0,30,55)
+    end
+    return setState
+end
+
+local function MakeSliderCard(parent, label, sub, order, minV, maxV, initV, fmt, onChange)
+    local Card=Instance.new("Frame",parent)
+    Card.Size=UDim2.new(1,-10,0,58); Card.BackgroundColor3=C.card
+    Card.BorderSizePixel=0; Card.LayoutOrder=order
+    Instance.new("UICorner",Card).CornerRadius=UDim.new(0,10)
+    Instance.new("UIStroke",Card).Color=C.border
+
+    local nL=Instance.new("TextLabel",Card)
+    nL.Text=label; nL.Size=UDim2.new(1,-80,0,18); nL.Position=UDim2.new(0,14,0,6)
+    nL.BackgroundTransparency=1; nL.TextColor3=C.text
+    nL.Font=Enum.Font.GothamBold; nL.TextSize=12; nL.TextXAlignment=Enum.TextXAlignment.Left
+
+    local vL=Instance.new("TextLabel",Card)
+    vL.Text=fmt(initV); vL.Size=UDim2.new(0,60,0,18); vL.Position=UDim2.new(1,-68,0,6)
+    vL.BackgroundTransparency=1; vL.TextColor3=C.accent
+    vL.Font=Enum.Font.Code; vL.TextSize=13; vL.TextXAlignment=Enum.TextXAlignment.Right
+
+    local sL=Instance.new("TextLabel",Card)
+    sL.Text=sub; sL.Size=UDim2.new(1,-80,0,12); sL.Position=UDim2.new(0,14,0,24)
+    sL.BackgroundTransparency=1; sL.TextColor3=C.sub
+    sL.Font=Enum.Font.Gotham; sL.TextSize=9; sL.TextXAlignment=Enum.TextXAlignment.Left
+
+    local Track=Instance.new("Frame",Card)
+    Track.Size=UDim2.new(1,-28,0,6); Track.Position=UDim2.new(0,14,0,42)
+    Track.BackgroundColor3=C.panel; Track.BorderSizePixel=0
+    Instance.new("UICorner",Track).CornerRadius=UDim.new(1,0)
+
+    local initPct=(initV-minV)/(maxV-minV)
+    local Fill=Instance.new("Frame",Track)
+    Fill.Size=UDim2.new(initPct,0,1,0); Fill.BackgroundColor3=C.accent; Fill.BorderSizePixel=0
+    Instance.new("UICorner",Fill).CornerRadius=UDim.new(1,0)
+
+    local Knob=Instance.new("TextButton",Track)
+    Knob.Text=""; Knob.Size=UDim2.new(0,16,0,16); Knob.AnchorPoint=Vector2.new(0.5,0.5)
+    Knob.Position=UDim2.new(initPct,0,0.5,0)
+    Knob.BackgroundColor3=Color3.fromRGB(255,255,255); Knob.BorderSizePixel=0; Knob.ZIndex=4
+    Instance.new("UICorner",Knob).CornerRadius=UDim.new(1,0)
+
+    local dragging=false
+    local function apply(ix)
+        local rel=math.clamp(ix-Track.AbsolutePosition.X,0,Track.AbsoluteSize.X)
+        local pct=rel/Track.AbsoluteSize.X
+        local v=minV+math.round((maxV-minV)*pct*10)/10
+        Fill.Size=UDim2.new(pct,0,1,0); Knob.Position=UDim2.new(pct,0,0.5,0)
+        vL.Text=fmt(v); if onChange then onChange(v) end
+    end
+    Knob.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=true end end)
+    UserInputService.InputChanged:Connect(function(i)
+        if dragging and i.UserInputType==Enum.UserInputType.MouseMovement then apply(i.Position.X) end
+    end)
+    UserInputService.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end end)
+    Track.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then apply(i.Position.X) end end)
+    return vL
+end
+
+local function MakeActionBtn(parent, icon, label, sub, order, accentCol, cb)
+    local Card=Instance.new("TextButton",parent)
+    Card.Size=UDim2.new(1,-10,0,44); Card.BackgroundColor3=C.card
+    Card.BorderSizePixel=0; Card.LayoutOrder=order; Card.Text=""
+    Instance.new("UICorner",Card).CornerRadius=UDim.new(0,10)
+    local cs=Instance.new("UIStroke",Card); cs.Color=accentCol or C.border; cs.Thickness=1
+
+    local iL=Instance.new("TextLabel",Card)
+    iL.Text=icon; iL.Size=UDim2.new(0,36,1,0); iL.Position=UDim2.new(0,6,0,0)
+    iL.BackgroundTransparency=1; iL.TextSize=18; iL.Font=Enum.Font.GothamBold
+    iL.TextXAlignment=Enum.TextXAlignment.Center
+
+    local nL=Instance.new("TextLabel",Card)
+    nL.Text=label; nL.Size=UDim2.new(1,-50,0,18); nL.Position=UDim2.new(0,46,0,6)
+    nL.BackgroundTransparency=1; nL.TextColor3=accentCol or C.text
+    nL.Font=Enum.Font.GothamBold; nL.TextSize=11; nL.TextXAlignment=Enum.TextXAlignment.Left
+
+    local dL=Instance.new("TextLabel",Card)
+    dL.Text=sub; dL.Size=UDim2.new(1,-50,0,13); dL.Position=UDim2.new(0,46,0,24)
+    dL.BackgroundTransparency=1; dL.TextColor3=C.sub
+    dL.Font=Enum.Font.Gotham; dL.TextSize=9; dL.TextXAlignment=Enum.TextXAlignment.Left
+
+    Card.MouseButton1Click:Connect(function()
+        TweenService:Create(Card,TweenInfo.new(0.08),{BackgroundColor3=Color3.fromRGB(20,25,40)}):Play()
+        task.delay(0.15,function() TweenService:Create(Card,TweenInfo.new(0.15),{BackgroundColor3=C.card}):Play() end)
+        if cb then cb(Card,nL) end
+    end)
+    return Card
+end
+
+-- ============================================================
+--  FEATURES TAB
+-- ============================================================
+SectionLabel(PFeatures,"Movement",1)
+MakeSliderCard(PFeatures,"Walk Speed","default 16  ·  max 300",2,0,300,walkSpeed,
+    function(v) return tostring(math.floor(v)) end,
+    function(v) walkSpeed=math.floor(v); saveSettings(); local h=getHuman(); if h then h.WalkSpeed=walkSpeed end end)
+
+SectionLabel(PFeatures,"Features",3)
+MakeToggleCard(PFeatures,"🚀","Infinite Jump","Jump again while airborne",4,"infJump")
+MakeToggleCard(PFeatures,"👻","No Clip","Walk through walls & floors",5,"noclip")
+MakeToggleCard(PFeatures,"🛡️","God Mode","Health locked to maximum",6,"godMode")
+MakeToggleCard(PFeatures,"🦅","Fly Mode","WASD · E up · Q down · 60 speed",7,"fly",nil,
+    function() if flyBV then flyBV:Destroy() flyBV=nil end if flyBG then flyBG:Destroy() flyBG=nil end end)
+MakeToggleCard(PFeatures,"⏱️","Anti AFK","Prevents auto-kick every 55s",8,"antiAfk")
+MakeToggleCard(PFeatures,"💡","Full Bright","Max lighting · removes fog",9,"fullBright")
+MakeToggleCard(PFeatures,"👁️","Player ESP","Name tags above all players",10,"esp",nil,
+    function() for _,bb in pairs(espBillboards) do pcall(function() bb:Destroy() end) end espBillboards={} end)
+
+SectionLabel(PFeatures,"Actions",11)
+MakeActionBtn(PFeatures,"📋","Print Position","Prints XYZ to output",12,C.accent,function(_,lbl)
+    local r=getRoot()
+    if r then
+        local p=r.Position
+        local msg=string.format("X=%.1f  Y=%.1f  Z=%.1f",p.X,p.Y,p.Z)
+        print("[AniPixels] "..msg); SLbl.Text=msg
+    end
+end)
+MakeActionBtn(PFeatures,"🔄","Respawn","Reset character",13,C.purple,function()
+    local h=getHuman(); if h then h.Health=0 end
+end)
+MakeActionBtn(PFeatures,"🌀","TP to Merge Circle","Teleport to Magic Circle",14,C.green,function()
+    local root=getRoot()
+    if not root then SLbl.Text="No character"; return end
+    pcall(function()
+        local model=workspace:WaitForChild("Map",3):WaitForChild("Lab",3):WaitForChild("Magic Circle",3)
+        local pos=model:GetModelCFrame().Position
+        root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+        SLbl.Text="Teleported to Magic Circle"
+    end)
+end)
+
+-- ============================================================
+--  BOSSES TAB
+-- ============================================================
+local RequestBattle=game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RequestBattle")
+
+SectionLabel(PBosses,"Auto Fight",1)
+
+local function isBossPresent(p) local c=workspace:FindFirstChild("Campaign") return c and c:FindFirstChild(p)~=nil end
+local function isBossDead(p)
+    local c=workspace:FindFirstChild("Campaign"); if not c then return false end
+    local b=c:FindFirstChild(p); if not b then return false end
+    local h=b:FindFirstChildOfClass("Humanoid"); return h and h.Health<=0 or false
+end
+
+local function MakeBossCard(icon,name,path,key,order)
+    local Card=Instance.new("Frame",PBosses)
+    Card.Size=UDim2.new(1,-10,0,54); Card.BackgroundColor3=C.card
+    Card.BorderSizePixel=0; Card.LayoutOrder=order
+    Instance.new("UICorner",Card).CornerRadius=UDim.new(0,10)
+    local cs=Instance.new("UIStroke",Card); cs.Color=C.border; cs.Thickness=1
+
+    local iL=Instance.new("TextLabel",Card)
+    iL.Text=icon; iL.Size=UDim2.new(0,36,1,0); iL.Position=UDim2.new(0,6,0,0)
+    iL.BackgroundTransparency=1; iL.TextSize=19; iL.Font=Enum.Font.GothamBold
+    iL.TextXAlignment=Enum.TextXAlignment.Center
+
+    local nL=Instance.new("TextLabel",Card)
+    nL.Text=name; nL.Size=UDim2.new(1,-190,0,18); nL.Position=UDim2.new(0,46,0,8)
+    nL.BackgroundTransparency=1; nL.TextColor3=Color3.fromRGB(210,180,255)
+    nL.Font=Enum.Font.GothamBold; nL.TextSize=11; nL.TextXAlignment=Enum.TextXAlignment.Left
+
+    local pL=Instance.new("TextLabel",Card)
+    pL.Text=path; pL.Size=UDim2.new(1,-190,0,13); pL.Position=UDim2.new(0,46,0,28)
+    pL.BackgroundTransparency=1; pL.TextColor3=Color3.fromRGB(50,30,80)
+    pL.Font=Enum.Font.Code; pL.TextSize=8; pL.TextXAlignment=Enum.TextXAlignment.Left
+
+    -- fire once btn
+    local fBtn=Instance.new("TextButton",Card)
+    fBtn.Text="▶"; fBtn.Size=UDim2.new(0,32,0,32); fBtn.Position=UDim2.new(1,-138,0.5,-16)
+    fBtn.BackgroundColor3=Color3.fromRGB(55,20,85); fBtn.TextColor3=Color3.fromRGB(190,130,255)
+    fBtn.Font=Enum.Font.GothamBold; fBtn.TextSize=13; fBtn.BorderSizePixel=0
+    Instance.new("UICorner",fBtn).CornerRadius=UDim.new(0,8)
+    fBtn.MouseButton1Click:Connect(function()
+        pcall(function()
+            local t=workspace:WaitForChild("Campaign",3):WaitForChild(path,3)
+            RequestBattle:FireServer(t)
+        end)
+        fBtn.Text="✓"; fBtn.BackgroundColor3=Color3.fromRGB(20,70,30)
+        task.delay(1.5,function() fBtn.Text="▶"; fBtn.BackgroundColor3=Color3.fromRGB(55,20,85) end)
+        SLbl.Text="Fired: "..name
+    end)
+
+    -- auto label
+    local aLbl=Instance.new("TextLabel",Card)
+    aLbl.Text="AUTO"; aLbl.Size=UDim2.new(0,34,0,12); aLbl.Position=UDim2.new(1,-138+36,0,6)
+    aLbl.BackgroundTransparency=1; aLbl.TextColor3=Color3.fromRGB(70,40,100)
+    aLbl.Font=Enum.Font.GothamBold; aLbl.TextSize=8; aLbl.TextXAlignment=Enum.TextXAlignment.Center
+
+    -- pill
+    local Pill=Instance.new("Frame",Card)
+    Pill.Size=UDim2.new(0,44,0,24); Pill.Position=UDim2.new(1,-50,0.5,-12)
+    Pill.BackgroundColor3=C.border; Pill.BorderSizePixel=0
+    Instance.new("UICorner",Pill).CornerRadius=UDim.new(1,0)
+
+    local Thumb=Instance.new("Frame",Pill)
+    Thumb.Size=UDim2.new(0,18,0,18); Thumb.Position=UDim2.new(0,3,0.5,-9)
+    Thumb.BackgroundColor3=C.sub; Thumb.BorderSizePixel=0
+    Instance.new("UICorner",Thumb).CornerRadius=UDim.new(1,0)
+
+    local ti=TweenInfo.new(0.18,Enum.EasingStyle.Quad)
+    local function setAuto(on)
+        states[key]=on; saveSettings()
+        if on then
+            TweenService:Create(Pill, ti,{BackgroundColor3=C.purpleD}):Play()
+            TweenService:Create(Thumb,ti,{Position=UDim2.new(0,23,0.5,-9),BackgroundColor3=C.purple}):Play()
+            cs.Color=C.purpleD; aLbl.TextColor3=C.purple
+        else
+            TweenService:Create(Pill, ti,{BackgroundColor3=C.border}):Play()
+            TweenService:Create(Thumb,ti,{Position=UDim2.new(0,3,0.5,-9),BackgroundColor3=C.sub}):Play()
+            cs.Color=C.border; aLbl.TextColor3=Color3.fromRGB(70,40,100)
+        end
+    end
+    local pBtn=Instance.new("TextButton",Pill)
+    pBtn.Size=UDim2.new(1,0,1,0); pBtn.BackgroundTransparency=1; pBtn.Text=""; pBtn.ZIndex=3
+    pBtn.MouseButton1Click:Connect(function() setAuto(not states[key]) end)
+
+    if states[key] then
+        Pill.BackgroundColor3=C.purpleD; Thumb.Position=UDim2.new(0,23,0.5,-9)
+        Thumb.BackgroundColor3=C.purple; cs.Color=C.purpleD; aLbl.TextColor3=C.purple
+    end
+end
+
+local bossConfig={
+    {"👹","Boros","Boros","autoBoros",2},
+    {"💀","Fusion Zamasu","Fusion Zamasu (Corrupted)","autoZamasu",3},
+    {"🩸","Heian Era Sukuna","Heian Era Sukuna","autoSukuna",4},
+    {"🖤","All For One","All For One","autoAllForOne",5},
+    {"🌙","Dio Over Heaven","Dio Over Heaven","autoDioHeaven",6},
+    {"🔴","Madara Ten Tails","Madara Ten Tails","autoMadara",7},
+}
+for _,cfg in ipairs(bossConfig) do MakeBossCard(cfg[1],cfg[2],cfg[3],cfg[4],cfg[5]) end
+
+SectionLabel(PBosses,"Fight Interval",8)
+MakeSliderCard(PBosses,"Fight Interval","seconds between auto fight attempts",9,0.3,10,autoFightDelay,
+    function(v) return string.format("%.1fs",v) end,
+    function(v) autoFightDelay=v; saveSettings() end)
+
+-- ============================================================
+--  MERGE TAB
+-- ============================================================
+local SquadUpdate=game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("SquadUpdate")
+local VIM=game:GetService("VirtualInputManager")
+
+-- Merge status card
+local MergeStatusCard=Instance.new("Frame",PMerge)
+MergeStatusCard.Size=UDim2.new(1,-10,0,70); MergeStatusCard.BackgroundColor3=C.card
+MergeStatusCard.BorderSizePixel=0; MergeStatusCard.LayoutOrder=1
+Instance.new("UICorner",MergeStatusCard).CornerRadius=UDim.new(0,10)
+local msc=Instance.new("UIStroke",MergeStatusCard); msc.Color=C.border; msc.Thickness=1
+
+local MSTitle=Instance.new("TextLabel",MergeStatusCard)
+MSTitle.Text="Auto Merge"; MSTitle.Size=UDim2.new(1,-100,0,18); MSTitle.Position=UDim2.new(0,14,0,8)
+MSTitle.BackgroundTransparency=1; MSTitle.TextColor3=C.text
+MSTitle.Font=Enum.Font.GothamBold; MSTitle.TextSize=13; MSTitle.TextXAlignment=Enum.TextXAlignment.Left
+
+local MSStatus=Instance.new("TextLabel",MergeStatusCard)
+MSStatus.Text="OFF · No targets selected"; MSStatus.Size=UDim2.new(1,-100,0,13); MSStatus.Position=UDim2.new(0,14,0,28)
+MSStatus.BackgroundTransparency=1; MSStatus.TextColor3=C.sub
+MSStatus.Font=Enum.Font.Code; MSStatus.TextSize=9; MSStatus.TextXAlignment=Enum.TextXAlignment.Left
+
+local MSChain=Instance.new("TextLabel",MergeStatusCard)
+MSChain.Text="Chain: —"; MSChain.Size=UDim2.new(1,-100,0,12); MSChain.Position=UDim2.new(0,14,0,44)
+MSChain.BackgroundTransparency=1; MSChain.TextColor3=Color3.fromRGB(80,130,80)
+MSChain.Font=Enum.Font.Code; MSChain.TextSize=9; MSChain.TextXAlignment=Enum.TextXAlignment.Left
+
+-- merge toggle pill in status card
+local MPill=Instance.new("Frame",MergeStatusCard)
+MPill.Size=UDim2.new(0,44,0,24); MPill.Position=UDim2.new(1,-50,0.5,-12)
+MPill.BackgroundColor3=C.border; MPill.BorderSizePixel=0
+Instance.new("UICorner",MPill).CornerRadius=UDim.new(1,0)
+
+local MThumb=Instance.new("Frame",MPill)
+MThumb.Size=UDim2.new(0,18,0,18); MThumb.Position=UDim2.new(0,3,0.5,-9)
+MThumb.BackgroundColor3=C.sub; MThumb.BorderSizePixel=0
+Instance.new("UICorner",MThumb).CornerRadius=UDim.new(1,0)
+
+local mti=TweenInfo.new(0.18,Enum.EasingStyle.Quad)
+local function setMerge(on)
+    states.mergeActive=on; saveSettings()
+    if on then
+        TweenService:Create(MPill, mti,{BackgroundColor3=Color3.fromRGB(0,120,50)}):Play()
+        TweenService:Create(MThumb,mti,{Position=UDim2.new(0,23,0.5,-9),BackgroundColor3=C.green}):Play()
+        msc.Color=Color3.fromRGB(0,120,50)
+        MSTitle.TextColor3=C.green
+    else
+        TweenService:Create(MPill, mti,{BackgroundColor3=C.border}):Play()
+        TweenService:Create(MThumb,mti,{Position=UDim2.new(0,3,0.5,-9),BackgroundColor3=C.sub}):Play()
+        msc.Color=C.border; MSTitle.TextColor3=C.text
+        MSStatus.Text="OFF · ".. (mergeTargetBase~="" and mergeTargetBase or "No target set")
+    end
+end
+if states.mergeActive then
+    MPill.BackgroundColor3=Color3.fromRGB(0,120,50); MThumb.Position=UDim2.new(0,23,0.5,-9)
+    MThumb.BackgroundColor3=C.green; msc.Color=Color3.fromRGB(0,120,50); MSTitle.TextColor3=C.green
+end
+local MPillBtn=Instance.new("TextButton",MPill)
+MPillBtn.Size=UDim2.new(1,0,1,0); MPillBtn.BackgroundTransparency=1; MPillBtn.Text=""; MPillBtn.ZIndex=3
+MPillBtn.MouseButton1Click:Connect(function() setMerge(not states.mergeActive) end)
+
+-- Threshold slider
+SectionLabel(PMerge,"Merge Threshold",2)
+MakeSliderCard(PMerge,"Merge when count reaches","Starts merging once you have this many",3,4,40,mergeThreshold,
+    function(v) return "x"..math.floor(v) end,
+    function(v) mergeThreshold=math.floor(v); saveSettings() end)
+
+-- Pet picker
+SectionLabel(PMerge,"Target Pet  (base name)",4)
+
+-- Search box card
+local SearchCard=Instance.new("Frame",PMerge)
+SearchCard.Size=UDim2.new(1,-10,0,38); SearchCard.BackgroundColor3=C.card
+SearchCard.BorderSizePixel=0; SearchCard.LayoutOrder=5
+Instance.new("UICorner",SearchCard).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",SearchCard).Color=C.border
+
+local SearchIcon=Instance.new("TextLabel",SearchCard)
+SearchIcon.Text="🔍"; SearchIcon.Size=UDim2.new(0,30,1,0); SearchIcon.Position=UDim2.new(0,4,0,0)
+SearchIcon.BackgroundTransparency=1; SearchIcon.TextSize=14; SearchIcon.Font=Enum.Font.GothamBold
+SearchIcon.TextXAlignment=Enum.TextXAlignment.Center
+
+local SearchBox=Instance.new("TextBox",SearchCard)
+SearchBox.Size=UDim2.new(1,-70,1,-10); SearchBox.Position=UDim2.new(0,34,0,5)
+SearchBox.BackgroundTransparency=1; SearchBox.TextColor3=C.text
+SearchBox.PlaceholderText="Search pets..."; SearchBox.PlaceholderColor3=C.sub
+SearchBox.Font=Enum.Font.Gotham; SearchBox.TextSize=11; SearchBox.BorderSizePixel=0
+SearchBox.TextXAlignment=Enum.TextXAlignment.Left; SearchBox.ClearTextOnFocus=false
+
+local RefreshBtn2=Instance.new("TextButton",SearchCard)
+RefreshBtn2.Text="↻"; RefreshBtn2.Size=UDim2.new(0,28,0,22); RefreshBtn2.Position=UDim2.new(1,-32,0.5,-11)
+RefreshBtn2.BackgroundColor3=Color3.fromRGB(0,70,35); RefreshBtn2.TextColor3=C.green
+RefreshBtn2.Font=Enum.Font.GothamBold; RefreshBtn2.TextSize=13; RefreshBtn2.BorderSizePixel=0
+Instance.new("UICorner",RefreshBtn2).CornerRadius=UDim.new(0,6)
+
+-- Pet list container
+local PetListCard=Instance.new("Frame",PMerge)
+PetListCard.Size=UDim2.new(1,-10,0,200); PetListCard.BackgroundColor3=C.card
+PetListCard.BorderSizePixel=0; PetListCard.LayoutOrder=6; PetListCard.ClipsDescendants=true
+Instance.new("UICorner",PetListCard).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",PetListCard).Color=C.border
+
+local PetHeader=Instance.new("Frame",PetListCard)
+PetHeader.Size=UDim2.new(1,0,0,24); PetHeader.BackgroundColor3=Color3.fromRGB(10,13,22); PetHeader.BorderSizePixel=0
+Instance.new("UICorner",PetHeader).CornerRadius=UDim.new(0,10)
+local PHFix=Instance.new("Frame",PetHeader); PHFix.Size=UDim2.new(1,0,0,10); PHFix.Position=UDim2.new(0,0,1,-10); PHFix.BackgroundColor3=Color3.fromRGB(10,13,22); PHFix.BorderSizePixel=0
+
+local PHLbl=Instance.new("TextLabel",PetHeader)
+PHLbl.Text="SELECT PETS  ·  tap to toggle  ·  multi-select"; PHLbl.Size=UDim2.new(1,-10,1,0); PHLbl.Position=UDim2.new(0,10,0,0)
+PHLbl.BackgroundTransparency=1; PHLbl.TextColor3=C.sub
+PHLbl.Font=Enum.Font.GothamBold; PHLbl.TextSize=9; PHLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+local PetScroll=Instance.new("ScrollingFrame",PetListCard)
+PetScroll.Size=UDim2.new(1,-6,1,-28); PetScroll.Position=UDim2.new(0,3,0,26)
+PetScroll.BackgroundTransparency=1; PetScroll.BorderSizePixel=0
+PetScroll.ScrollBarThickness=3; PetScroll.ScrollBarImageColor3=C.green
+PetScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; PetScroll.CanvasSize=UDim2.new(0,0,0,0)
+local PetLayout=Instance.new("UIListLayout",PetScroll)
+PetLayout.Padding=UDim.new(0,3); PetLayout.SortOrder=Enum.SortOrder.LayoutOrder
+
+-- Chain preview card
+local ChainCard=Instance.new("Frame",PMerge)
+ChainCard.Size=UDim2.new(1,-10,0,150); ChainCard.BackgroundColor3=C.card
+ChainCard.BorderSizePixel=0; ChainCard.LayoutOrder=7
+Instance.new("UICorner",ChainCard).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",ChainCard).Color=C.border
+
+local ChainTitle=Instance.new("TextLabel",ChainCard)
+ChainTitle.Text="MERGE CHAIN  (last selected)"; ChainTitle.Size=UDim2.new(1,-10,0,14); ChainTitle.Position=UDim2.new(0,10,0,5)
+ChainTitle.BackgroundTransparency=1; ChainTitle.TextColor3=C.sub
+ChainTitle.Font=Enum.Font.GothamBold; ChainTitle.TextSize=8; ChainTitle.TextXAlignment=Enum.TextXAlignment.Left
+
+-- tier rows: vertical stack, full readable rows
+local tierColors={C.text, C.green, C.accent, C.gold}
+local tierBg={Color3.fromRGB(18,22,32), Color3.fromRGB(8,28,16), Color3.fromRGB(6,22,38), Color3.fromRGB(30,24,8)}
+local tierLabels={"Base","Giant","Mega","Titan"}
+local tierRows={}
+for i=0,3 do
+    local row=Instance.new("Frame",ChainCard)
+    row.Size=UDim2.new(1,-20,0,26); row.Position=UDim2.new(0,10,0,22+i*30)
+    row.BackgroundColor3=tierBg[i+1]; row.BorderSizePixel=0
+    Instance.new("UICorner",row).CornerRadius=UDim.new(0,7)
+
+    -- tier badge
+    local badge=Instance.new("TextLabel",row)
+    badge.Text=tierLabels[i+1]; badge.Size=UDim2.new(0,40,1,0); badge.Position=UDim2.new(0,6,0,0)
+    badge.BackgroundTransparency=1; badge.TextColor3=tierColors[i+1]
+    badge.Font=Enum.Font.GothamBold; badge.TextSize=9; badge.TextXAlignment=Enum.TextXAlignment.Left
+
+    -- separator
+    local sep=Instance.new("Frame",row)
+    sep.Size=UDim2.new(0,1,0,14); sep.Position=UDim2.new(0,48,0.5,-7)
+    sep.BackgroundColor3=tierColors[i+1]; sep.BackgroundTransparency=0.7; sep.BorderSizePixel=0
+
+    -- pet name
+    local nameLbl=Instance.new("TextLabel",row)
+    nameLbl.Text="—"; nameLbl.Size=UDim2.new(1,-110,1,0); nameLbl.Position=UDim2.new(0,54,0,0)
+    nameLbl.BackgroundTransparency=1; nameLbl.TextColor3=Color3.fromRGB(200,215,235)
+    nameLbl.Font=Enum.Font.Gotham; nameLbl.TextSize=10; nameLbl.TextXAlignment=Enum.TextXAlignment.Left
+    nameLbl.TextTruncate=Enum.TextTruncate.AtEnd
+
+    -- count pill
+    local countPill=Instance.new("Frame",row)
+    countPill.Size=UDim2.new(0,46,0,18); countPill.Position=UDim2.new(1,-50,0.5,-9)
+    countPill.BackgroundColor3=tierColors[i+1]; countPill.BackgroundTransparency=0.75; countPill.BorderSizePixel=0
+    Instance.new("UICorner",countPill).CornerRadius=UDim.new(0,5)
+
+    local countLbl=Instance.new("TextLabel",countPill)
+    countLbl.Text="x0"; countLbl.Size=UDim2.new(1,0,1,0)
+    countLbl.BackgroundTransparency=1; countLbl.TextColor3=tierColors[i+1]
+    countLbl.Font=Enum.Font.Code; countLbl.TextSize=11; countLbl.TextXAlignment=Enum.TextXAlignment.Center
+
+    tierRows[i]={name=nameLbl, count=countLbl}
+end
+local function updateChainPreview(base)
+    if base=="" then
+        for i=0,3 do tierRows[i].name.Text="—"; tierRows[i].count.Text="x0" end
+        MSChain.Text="Chain: —"; return
+    end
+    for i=0,3 do
+        local name=getTierName(base,i)
+        local dInv=LP:FindFirstChild("DoodleInv")
+        local cnt=0
+        if dInv then local iv=dInv:FindFirstChild(name) if iv then cnt=iv.Value end end
+        tierRows[i].name.Text=name
+        tierRows[i].count.Text="x"..cnt
+    end
+    MSChain.Text="Chain: "..base.." → Giant → Mega → Titan"
+end
+
+-- Pet row builder
+local petBtns={}
+local allBasePets={}
+
+local function getPetCount(name)
+    local d=LP:FindFirstChild("DoodleInv"); if not d then return 0 end
+    local iv=d:FindFirstChild(name); return iv and iv.Value or 0
+end
+
+local function refreshPetHighlights()
+    local count=0
+    for _,_ in pairs(mergeTargets) do count=count+1 end
+    for n,pb in pairs(petBtns) do
+        local sel=mergeTargets[n]==true
+        pb.BackgroundColor3=sel and Color3.fromRGB(0,55,28) or Color3.fromRGB(10,15,22)
+        for _,child in pairs(pb:GetChildren()) do
+            if child:IsA("TextLabel") and child.Name=="nameLbl" then
+                child.TextColor3=sel and C.green or C.text
+            end
+            if child:IsA("Frame") and child.Name=="checkBox" then
+                child.BackgroundColor3=sel and C.green or C.border
+                local tick=child:FindFirstChild("tick")
+                if tick then tick.Visible=sel end
+            end
+        end
+    end
+    local names={}
+    for n,_ in pairs(mergeTargets) do names[#names+1]=n end
+    local txt=count==0 and "No targets selected" or count.." selected: "..table.concat(names,", ")
+    MSStatus.Text=(states.mergeActive and "ON" or "OFF").." · "..txt
+    SLbl.Text=count.." merge target(s) selected"
+    saveSettings()
+end
+
+local function toggleBasePet(base)
+    if mergeTargets[base] then
+        mergeTargets[base]=nil
+    else
+        mergeTargets[base]=true
+    end
+    -- chain preview shows last toggled
+    updateChainPreview(base)
+    refreshPetHighlights()
+end
+
+local function buildPetList(filter)
+    -- clear
+    for _,c in pairs(PetScroll:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
+    petBtns={}
+
+    local dInv=LP:FindFirstChild("DoodleInv"); if not dInv then PHLbl.Text="DoodleInv not found"; return end
+
+    -- collect all base names including those only present as Giant/Mega/Titan variants
+    local prefixes={"Giant ","Mega ","Titan ","Sparking "}
+    local baseSet={}
+    for _,iv in pairs(dInv:GetChildren()) do
+        if iv:IsA("IntValue") and iv.Value>0 then
+            local n=iv.Name
+            -- strip any known prefix to find the base name
+            local base=n
+            for _,p in ipairs(prefixes) do
+                if n:sub(1,#p)==p then base=n:sub(#p+1); break end
+            end
+            -- apply filter on base name
+            local lc=base:lower()
+            local passFilter=(filter=="" or lc:find(filter:lower(),1,true))
+            if passFilter then
+                -- accumulate total across all tiers for sorting; base entry created once
+                if not baseSet[base] then baseSet[base]=0 end
+                baseSet[base]=baseSet[base]+iv.Value
+            end
+        end
+    end
+
+    -- sort by count desc
+    local sorted={}
+    for n,cnt in pairs(baseSet) do table.insert(sorted,{name=n,count=cnt}) end
+    table.sort(sorted,function(a,b) return a.count>b.count end)
+
+    PHLbl.Text="SELECT BASE PET  ·  "..#sorted.." found"
+
+    for i,entry in ipairs(sorted) do
+        local base=entry.name
+        -- check all tiers
+        local t0=getPetCount(base)
+        local t1=getPetCount("Giant "..base)
+        local t2=getPetCount("Mega "..base)
+        local t3=getPetCount("Titan "..base)
+
+        local btn=Instance.new("TextButton",PetScroll)
+        btn.Size=UDim2.new(1,-4,0,28); btn.LayoutOrder=i
+        btn.BackgroundColor3= (base==mergeTargetBase) and Color3.fromRGB(0,60,30) or Color3.fromRGB(10,15,22)
+        btn.TextColor3= (base==mergeTargetBase) and C.green or C.text
+        btn.BorderSizePixel=0; btn.Font=Enum.Font.GothamBold; btn.TextSize=0
+        Instance.new("UICorner",btn).CornerRadius=UDim.new(0,6)
+
+        -- left: name
+        local nLbl=Instance.new("TextLabel",btn)
+        nLbl.Text=base; nLbl.Size=UDim2.new(0.5,-4,1,0); nLbl.Position=UDim2.new(0,8,0,0)
+        nLbl.BackgroundTransparency=1; nLbl.TextColor3= (base==mergeTargetBase) and C.green or C.text
+        nLbl.Font=Enum.Font.GothamBold; nLbl.TextSize=10; nLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+        -- right: tier counts
+        local tierStr=string.format("①x%d  ②x%d  ③x%d  ④x%d",t0,t1,t2,t3)
+        local cLbl=Instance.new("TextLabel",btn)
+        cLbl.Text=tierStr; cLbl.Size=UDim2.new(0.5,-8,1,0); cLbl.Position=UDim2.new(0.5,0,0,0)
+        cLbl.BackgroundTransparency=1; cLbl.TextColor3=C.sub
+        cLbl.Font=Enum.Font.Code; cLbl.TextSize=8; cLbl.TextXAlignment=Enum.TextXAlignment.Right
+
+        -- checkbox
+        local checkBox=Instance.new("Frame",btn)
+        checkBox.Name="checkBox"
+        checkBox.Size=UDim2.new(0,14,0,14); checkBox.Position=UDim2.new(1,-18,0.5,-7)
+        checkBox.BackgroundColor3=mergeTargets[base] and C.green or C.border; checkBox.BorderSizePixel=0
+        Instance.new("UICorner",checkBox).CornerRadius=UDim.new(0,3)
+        local tick=Instance.new("TextLabel",checkBox)
+        tick.Name="tick"; tick.Text="✓"; tick.Size=UDim2.new(1,0,1,0)
+        tick.BackgroundTransparency=1; tick.TextColor3=Color3.fromRGB(255,255,255)
+        tick.Font=Enum.Font.GothamBold; tick.TextSize=9; tick.Visible=mergeTargets[base]==true
+
+        nLbl.Name="nameLbl"
+        petBtns[base]=btn
+        local bname=base
+        btn.MouseButton1Click:Connect(function() toggleBasePet(bname) end)
+    end
+
+    refreshPetHighlights()
+    -- show chain for first selected or first in list
+    local firstSel=""
+    for n,_ in pairs(mergeTargets) do firstSel=n break end
+    updateChainPreview(firstSel)
+end
+
+SearchBox:GetPropertyChangedSignal("Text"):Connect(function() buildPetList(SearchBox.Text) end)
+RefreshBtn2.MouseButton1Click:Connect(function() buildPetList(SearchBox.Text) end)
+task.delay(1.2, function() buildPetList("") end)
+
+-- ============================================================
+--  MERGE LOOP LOGIC
+-- ============================================================
+local function pressE()
+    VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+    task.wait(0.1)
+    VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+end
+
+-- Returns: petName, tierIndex — scans ALL selected targets, returns first ready tier
+local function getActiveMergeTier()
+    local dInv=LP:FindFirstChild("DoodleInv"); if not dInv then return nil,nil end
+    for base,_ in pairs(mergeTargets) do
+        for tier=0,2 do  -- T3 (Titan) is end-game, skip
+            local name=getTierName(base,tier)
+            local iv=dInv:FindFirstChild(name)
+            local cnt=iv and iv.Value or 0
+            if cnt>=mergeThreshold then return name,tier,base end
+        end
+    end
+    return nil,nil,nil
+end
+
+task.spawn(function()
+    while true do
+        local anyTarget=next(mergeTargets)~=nil
+        if states.mergeActive and anyTarget then
+            local petName,tier,activeBase=getActiveMergeTier()
+            if petName then
+                local dInv=LP:FindFirstChild("DoodleInv")
+                local cnt=dInv and dInv:FindFirstChild(petName) and dInv:FindFirstChild(petName).Value or 0
+
+                MSStatus.Text="🔀 Merging T"..tier.." "..petName.." (x"..cnt..")"
+                SLbl.Text="Merging: "..petName.." x"..cnt
+
+                -- Equip 4x of this pet (fire twice to ensure server receives it)
+                local squad={["1"]=petName,["2"]=petName,["3"]=petName,["4"]=petName}
+                pcall(function() SquadUpdate:FireServer(squad) end)
+                task.wait(0.1)
+                pcall(function() SquadUpdate:FireServer(squad) end)
+                task.wait(0.1)
+
+                -- TP to merge circle only if not already close
+                local root=getRoot()
+                if root then
+                    pcall(function()
+                        local model=workspace:WaitForChild("Map",3):WaitForChild("Lab",3):WaitForChild("Magic Circle",3)
+                        local pos=model:GetModelCFrame().Position
+                        local dist=(root.Position-pos).Magnitude
+                        if dist>20 then
+                            root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                            task.wait(0.2)
+                        end
+                    end)
+                end
+
+                -- Press E rapidly 3 times to ensure merge registers
+                pressE()
+                task.wait(0.1)
+                pressE()
+                task.wait(0.1)
+                pressE()
+                task.wait(0.3)
+
+                -- refresh list
+                buildPetList(SearchBox.Text)
+            else
+                -- no tier ready yet
+                local names={}
+                for n,_ in pairs(mergeTargets) do names[#names+1]=n end
+                MSStatus.Text="⏳ Waiting · "..table.concat(names,", ").." (need x"..mergeThreshold..")"
+                task.wait(2)
+            end
+        else
+            task.wait(0.5)
+        end
+    end
+end)
+
+
+-- ============================================================
+--  FARM TAB
+-- ============================================================
+local RequestBattle2=game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RequestBattle")
+
+local function isInBattle()
+    pcall(function()
+        local gui=LP.PlayerGui:FindFirstChild("ScreenGui")
+        if gui then
+            local bf=gui:FindFirstChild("BattleFrame")
+            if bf then return bf.Visible end
+        end
+    end)
+    -- fallback: check all ScreenGuis
+    for _,sg in pairs(LP.PlayerGui:GetChildren()) do
+        if sg:IsA("ScreenGui") then
+            local bf=sg:FindFirstChild("BattleFrame")
+            if bf and bf.Visible then return true end
+        end
+    end
+    return false
+end
+
+-- ── Farm Status Card ─────────────────────────────────────────
+local FarmStatusCard=Instance.new("Frame",PFarm)
+FarmStatusCard.Size=UDim2.new(1,-10,0,60); FarmStatusCard.BackgroundColor3=C.card
+FarmStatusCard.BorderSizePixel=0; FarmStatusCard.LayoutOrder=1
+Instance.new("UICorner",FarmStatusCard).CornerRadius=UDim.new(0,10)
+local fsc=Instance.new("UIStroke",FarmStatusCard); fsc.Color=C.border; fsc.Thickness=1
+
+local FSTitle=Instance.new("TextLabel",FarmStatusCard)
+FSTitle.Text="Auto Farm"; FSTitle.Size=UDim2.new(1,-100,0,18); FSTitle.Position=UDim2.new(0,14,0,8)
+FSTitle.BackgroundTransparency=1; FSTitle.TextColor3=C.text
+FSTitle.Font=Enum.Font.GothamBold; FSTitle.TextSize=13; FSTitle.TextXAlignment=Enum.TextXAlignment.Left
+
+local FSStatus=Instance.new("TextLabel",FarmStatusCard)
+FSStatus.Text="OFF · No targets"; FSStatus.Size=UDim2.new(1,-100,0,13); FSStatus.Position=UDim2.new(0,14,0,28)
+FSStatus.BackgroundTransparency=1; FSStatus.TextColor3=C.sub
+FSStatus.Font=Enum.Font.Code; FSStatus.TextSize=9; FSStatus.TextXAlignment=Enum.TextXAlignment.Left
+
+local FSBattle=Instance.new("TextLabel",FarmStatusCard)
+FSBattle.Text="● Not in battle"; FSBattle.Size=UDim2.new(1,-100,0,12); FSBattle.Position=UDim2.new(0,14,0,44)
+FSBattle.BackgroundTransparency=1; FSBattle.TextColor3=C.sub
+FSBattle.Font=Enum.Font.Code; FSBattle.TextSize=9; FSBattle.TextXAlignment=Enum.TextXAlignment.Left
+
+-- farm toggle pill
+local FPill=Instance.new("Frame",FarmStatusCard)
+FPill.Size=UDim2.new(0,44,0,24); FPill.Position=UDim2.new(1,-50,0.5,-12)
+FPill.BackgroundColor3=C.border; FPill.BorderSizePixel=0
+Instance.new("UICorner",FPill).CornerRadius=UDim.new(1,0)
+local FThumb=Instance.new("Frame",FPill)
+FThumb.Size=UDim2.new(0,18,0,18); FThumb.Position=UDim2.new(0,3,0.5,-9)
+FThumb.BackgroundColor3=C.sub; FThumb.BorderSizePixel=0
+Instance.new("UICorner",FThumb).CornerRadius=UDim.new(1,0)
+
+local fti=TweenInfo.new(0.18,Enum.EasingStyle.Quad)
+local function setFarm(on)
+    states.farmActive=on; saveSettings()
+    if on then
+        TweenService:Create(FPill, fti,{BackgroundColor3=Color3.fromRGB(160,100,0)}):Play()
+        TweenService:Create(FThumb,fti,{Position=UDim2.new(0,23,0.5,-9),BackgroundColor3=C.orange}):Play()
+        fsc.Color=Color3.fromRGB(160,100,0); FSTitle.TextColor3=C.orange
+    else
+        TweenService:Create(FPill, fti,{BackgroundColor3=C.border}):Play()
+        TweenService:Create(FThumb,fti,{Position=UDim2.new(0,3,0.5,-9),BackgroundColor3=C.sub}):Play()
+        fsc.Color=C.border; FSTitle.TextColor3=C.text
+        FSStatus.Text="OFF · No targets"
+    end
+end
+if states.farmActive then
+    FPill.BackgroundColor3=Color3.fromRGB(160,100,0); FThumb.Position=UDim2.new(0,23,0.5,-9)
+    FThumb.BackgroundColor3=C.orange; fsc.Color=Color3.fromRGB(160,100,0); FSTitle.TextColor3=C.orange
+end
+local FPillBtn=Instance.new("TextButton",FPill)
+FPillBtn.Size=UDim2.new(1,0,1,0); FPillBtn.BackgroundTransparency=1; FPillBtn.Text=""; FPillBtn.ZIndex=3
+FPillBtn.MouseButton1Click:Connect(function() setFarm(not states.farmActive) end)
+
+-- ── Team Manager ─────────────────────────────────────────────
+SectionLabel(PFarm,"Team Manager",2)
+
+-- Helper: read current equipped pets from workspace.PlayerName.Pets
+local function readEquippedPets()
+    local slots={}
+    local petsFolder=workspace:FindFirstChild(LP.Name) and workspace:FindFirstChild(LP.Name):FindFirstChild("Pets")
+    if not petsFolder then return slots end
+    local children=petsFolder:GetChildren()
+    for i=1,4 do
+        slots[tostring(i)]= children[i] and children[i].Name or ""
+    end
+    return slots
+end
+
+local function applySlots(slots)
+    farmTeam=slots
+    pcall(function() SquadUpdate:FireServer(slots) end)
+    saveSettings()
+    SLbl.Text="Team applied via SquadUpdate"
+end
+
+-- Preset team slots: Raid, Farm, Trials, PVP
+local presetDefs={
+    {key="Raid",   icon="⚔️",  color=Color3.fromRGB(140,40,200), colorD=Color3.fromRGB(60,10,100)},
+    {key="Farm",   icon="🌾",  color=Color3.fromRGB(180,120,0),  colorD=Color3.fromRGB(80,50,0)},
+    {key="Trials", icon="🏆",  color=Color3.fromRGB(0,140,200),  colorD=Color3.fromRGB(0,60,100)},
+    {key="PVP",    icon="🥊",  color=Color3.fromRGB(220,50,50),  colorD=Color3.fromRGB(100,15,15)},
+}
+
+-- load preset teams from savedTeams
+local presetTeams={}
+for _,pd in ipairs(presetDefs) do
+    presetTeams[pd.key]=savedTeams[pd.key] or {["1"]="",["2"]="",["3"]="",["4"]=""}
+end
+
+local activePreset=nil   -- which preset is selected in the card
+local presetSlotLabels={}  -- key -> {lbl1,lbl2,lbl3,lbl4}
+
+local function refreshPresetSlotDisplay(key)
+    local team=presetTeams[key]
+    local lbls=presetSlotLabels[key]
+    if not lbls or not team then return end
+    for i=1,4 do
+        local pet=team[tostring(i)] or ""
+        lbls[i].Text= pet~="" and ("S"..i.."  "..pet) or ("S"..i.."  —")
+        lbls[i].TextColor3= pet~="" and C.text or C.sub
+    end
+end
+
+-- Build 4 preset team cards (2x2 grid)
+local GridOuter=Instance.new("Frame",PFarm)
+GridOuter.Size=UDim2.new(1,-10,0,296); GridOuter.BackgroundTransparency=1
+GridOuter.BorderSizePixel=0; GridOuter.LayoutOrder=3
+
+for gi,pd in ipairs(presetDefs) do
+    local col=(gi-1)%2
+    local row=math.floor((gi-1)/2)
+    local card=Instance.new("Frame",GridOuter)
+    card.Size=UDim2.new(0.5,-6,0,138); card.Position=UDim2.new(col*0.5, col==0 and 0 or 6, 0, row*144)
+    card.BackgroundColor3=C.card; card.BorderSizePixel=0
+    Instance.new("UICorner",card).CornerRadius=UDim.new(0,10)
+    local stroke=Instance.new("UIStroke",card); stroke.Color=pd.colorD; stroke.Thickness=1
+
+    -- header
+    local hdr=Instance.new("Frame",card)
+    hdr.Size=UDim2.new(1,0,0,26); hdr.BackgroundColor3=pd.colorD; hdr.BorderSizePixel=0
+    Instance.new("UICorner",hdr).CornerRadius=UDim.new(0,10)
+    local hfix=Instance.new("Frame",hdr); hfix.Size=UDim2.new(1,0,0,10); hfix.Position=UDim2.new(0,0,1,-10); hfix.BackgroundColor3=pd.colorD; hfix.BorderSizePixel=0
+
+    local hIcon=Instance.new("TextLabel",hdr)
+    hIcon.Text=pd.icon; hIcon.Size=UDim2.new(0,22,1,0); hIcon.Position=UDim2.new(0,6,0,0)
+    hIcon.BackgroundTransparency=1; hIcon.TextSize=13; hIcon.Font=Enum.Font.GothamBold
+
+    local hLbl=Instance.new("TextLabel",hdr)
+    hLbl.Text=pd.key.." Team"; hLbl.Size=UDim2.new(1,-70,1,0); hLbl.Position=UDim2.new(0,28,0,0)
+    hLbl.BackgroundTransparency=1; hLbl.TextColor3=pd.color
+    hLbl.Font=Enum.Font.GothamBold; hLbl.TextSize=11; hLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+    -- slot display labels
+    local slotLbls={}
+    presetSlotLabels[pd.key]=slotLbls
+    local team=presetTeams[pd.key]
+    for si=1,4 do
+        local sl=Instance.new("TextLabel",card)
+        sl.Size=UDim2.new(1,-10,0,16); sl.Position=UDim2.new(0,8,0,28+(si-1)*16)
+        sl.BackgroundTransparency=1
+        local pet=team[tostring(si)] or ""
+        sl.Text= pet~="" and ("S"..si.."  "..pet) or ("S"..si.."  —")
+        sl.TextColor3= pet~="" and C.text or C.sub
+        sl.Font=Enum.Font.Code; sl.TextSize=10; sl.TextXAlignment=Enum.TextXAlignment.Left
+        sl.TextTruncate=Enum.TextTruncate.AtEnd
+        slotLbls[si]=sl
+    end
+
+    -- buttons row
+    local captureBtn=Instance.new("TextButton",card)
+    captureBtn.Text="📸 Capture"; captureBtn.Size=UDim2.new(0.5,-4,0,20); captureBtn.Position=UDim2.new(0,4,1,-24)
+    captureBtn.BackgroundColor3=pd.colorD; captureBtn.TextColor3=pd.color
+    captureBtn.Font=Enum.Font.GothamBold; captureBtn.TextSize=8; captureBtn.BorderSizePixel=0
+    Instance.new("UICorner",captureBtn).CornerRadius=UDim.new(0,6)
+
+    local useBtn=Instance.new("TextButton",card)
+    useBtn.Text="▶ Use"; useBtn.Size=UDim2.new(0.5,-4,0,20); useBtn.Position=UDim2.new(0.5,0,1,-24)
+    useBtn.BackgroundColor3=Color3.fromRGB(0,70,30); useBtn.TextColor3=C.green
+    useBtn.Font=Enum.Font.GothamBold; useBtn.TextSize=8; useBtn.BorderSizePixel=0
+    Instance.new("UICorner",useBtn).CornerRadius=UDim.new(0,6)
+
+    local pkey=pd.key
+    captureBtn.MouseButton1Click:Connect(function()
+        local slots=readEquippedPets()
+        presetTeams[pkey]=slots
+        savedTeams[pkey]=slots
+        saveSettings()
+        -- update slot labels immediately on capture
+        local lbls=presetSlotLabels[pkey]
+        if lbls then
+            for si=1,4 do
+                local pet=slots[tostring(si)] or ""
+                lbls[si].Text= pet~="" and ("S"..si.."  "..pet) or ("S"..si.."  â")
+                lbls[si].TextColor3= pet~="" and C.text or C.sub
+            end
+        end
+        stroke.Color=pd.color
+        captureBtn.Text="â Saved!"
+        task.delay(1.5,function()
+            captureBtn.Text="ð¸ Capture"
+            stroke.Color=pd.colorD
+        end)
+        SLbl.Text=pkey.." team captured & saved"
+    end)
+
+    useBtn.MouseButton1Click:Connect(function()
+        local slots=presetTeams[pkey]
+        local hasAny=false
+        for _,v in pairs(slots) do if v~="" then hasAny=true break end end
+        if not hasAny then SLbl.Text=pkey.." team is empty — capture first"; return end
+        applySlots(slots)
+        SLbl.Text=pkey.." team applied"
+        useBtn.Text="✓ Applied"
+        task.delay(1.5,function() useBtn.Text="▶ Use" end)
+    end)
+end
+
+-- refresh all displays on load
+task.delay(0.5,function()
+    for _,pd in ipairs(presetDefs) do
+        refreshPresetSlotDisplay(pd.key)
+    end
+end)
+
+local function refreshTeamList() end  -- stub (no separate list needed)
+
+-- ── Campaign Pet List ─────────────────────────────────────────
+SectionLabel(PFarm,"Farm Options",5)
+MakeToggleCard(PFarm,"🚫","Disable Teleport","Farm in-place · no auto TP to target",5,"farmNoTP")
+
+SectionLabel(PFarm,"Campaign Targets",6)
+
+local FSearchCard=Instance.new("Frame",PFarm)
+FSearchCard.Size=UDim2.new(1,-10,0,38); FSearchCard.BackgroundColor3=C.card
+FSearchCard.BorderSizePixel=0; FSearchCard.LayoutOrder=7
+Instance.new("UICorner",FSearchCard).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",FSearchCard).Color=C.border
+
+local FSearchIcon=Instance.new("TextLabel",FSearchCard)
+FSearchIcon.Text="🔍"; FSearchIcon.Size=UDim2.new(0,30,1,0); FSearchIcon.Position=UDim2.new(0,4,0,0)
+FSearchIcon.BackgroundTransparency=1; FSearchIcon.TextSize=14; FSearchIcon.Font=Enum.Font.GothamBold
+FSearchIcon.TextXAlignment=Enum.TextXAlignment.Center
+
+local FSearchBox=Instance.new("TextBox",FSearchCard)
+FSearchBox.Size=UDim2.new(1,-70,1,-10); FSearchBox.Position=UDim2.new(0,34,0,5)
+FSearchBox.BackgroundTransparency=1; FSearchBox.TextColor3=C.text
+FSearchBox.PlaceholderText="Search campaign..."; FSearchBox.PlaceholderColor3=C.sub
+FSearchBox.Font=Enum.Font.Gotham; FSearchBox.TextSize=11; FSearchBox.BorderSizePixel=0
+FSearchBox.TextXAlignment=Enum.TextXAlignment.Left; FSearchBox.ClearTextOnFocus=false
+
+local FRefreshBtn=Instance.new("TextButton",FSearchCard)
+FRefreshBtn.Text="↻"; FRefreshBtn.Size=UDim2.new(0,28,0,22); FRefreshBtn.Position=UDim2.new(1,-32,0.5,-11)
+FRefreshBtn.BackgroundColor3=Color3.fromRGB(80,60,0); FRefreshBtn.TextColor3=C.orange
+FRefreshBtn.Font=Enum.Font.GothamBold; FRefreshBtn.TextSize=13; FRefreshBtn.BorderSizePixel=0
+Instance.new("UICorner",FRefreshBtn).CornerRadius=UDim.new(0,6)
+
+local CampListCard=Instance.new("Frame",PFarm)
+CampListCard.Size=UDim2.new(1,-10,0,200); CampListCard.BackgroundColor3=C.card
+CampListCard.BorderSizePixel=0; CampListCard.LayoutOrder=8; CampListCard.ClipsDescendants=true
+Instance.new("UICorner",CampListCard).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",CampListCard).Color=C.border
+
+local CampHeader=Instance.new("Frame",CampListCard)
+CampHeader.Size=UDim2.new(1,0,0,24); CampHeader.BackgroundColor3=Color3.fromRGB(10,13,22); CampHeader.BorderSizePixel=0
+Instance.new("UICorner",CampHeader).CornerRadius=UDim.new(0,10)
+local CHFix=Instance.new("Frame",CampHeader); CHFix.Size=UDim2.new(1,0,0,10); CHFix.Position=UDim2.new(0,0,1,-10); CHFix.BackgroundColor3=Color3.fromRGB(10,13,22); CHFix.BorderSizePixel=0
+
+local CHLbl=Instance.new("TextLabel",CampHeader)
+CHLbl.Text="TAP TO SELECT TARGETS  ·  multi-select"; CHLbl.Size=UDim2.new(1,-10,1,0); CHLbl.Position=UDim2.new(0,10,0,0)
+CHLbl.BackgroundTransparency=1; CHLbl.TextColor3=C.sub
+CHLbl.Font=Enum.Font.GothamBold; CHLbl.TextSize=9; CHLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+local CampScroll=Instance.new("ScrollingFrame",CampListCard)
+CampScroll.Size=UDim2.new(1,-6,1,-28); CampScroll.Position=UDim2.new(0,3,0,26)
+CampScroll.BackgroundTransparency=1; CampScroll.BorderSizePixel=0
+CampScroll.ScrollBarThickness=3; CampScroll.ScrollBarImageColor3=C.orange
+CampScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; CampScroll.CanvasSize=UDim2.new(0,0,0,0)
+local CampLayout=Instance.new("UIListLayout",CampScroll)
+CampLayout.Padding=UDim.new(0,3); CampLayout.SortOrder=Enum.SortOrder.LayoutOrder
+
+local campBtns={}
+
+local function buildCampList(filter)
+    for _,c in pairs(CampScroll:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
+    campBtns={}
+
+    local campaign=workspace:FindFirstChild("Campaign")
+    if not campaign then CHLbl.Text="workspace.Campaign not found"; return end
+
+    local found={}
+    for _,model in pairs(campaign:GetChildren()) do
+        local n=model.Name
+        local lc=n:lower()
+        local pass=(filter=="" or lc:find(filter:lower(),1,true))
+        if pass then table.insert(found,n) end
+    end
+    table.sort(found)
+
+    CHLbl.Text="CAMPAIGN TARGETS  ·  "..#found.." found"
+
+    for i,name in ipairs(found) do
+        local sel=farmTargets[name]==true
+        local btn=Instance.new("TextButton",CampScroll)
+        btn.Size=UDim2.new(1,-4,0,26); btn.LayoutOrder=i
+        btn.BackgroundColor3=sel and Color3.fromRGB(50,30,0) or Color3.fromRGB(10,15,22)
+        btn.BorderSizePixel=0; btn.Text=""; btn.Font=Enum.Font.GothamBold; btn.TextSize=0
+        Instance.new("UICorner",btn).CornerRadius=UDim.new(0,6)
+        Instance.new("UIStroke",btn).Color=sel and C.orange or C.border
+
+        local nLbl=Instance.new("TextLabel",btn)
+        nLbl.Name="nLbl"; nLbl.Text="  "..name; nLbl.Size=UDim2.new(1,-36,1,0); nLbl.Position=UDim2.new(0,0,0,0)
+        nLbl.BackgroundTransparency=1; nLbl.TextColor3=sel and C.orange or C.text
+        nLbl.Font=Enum.Font.GothamBold; nLbl.TextSize=10; nLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+        local chk=Instance.new("Frame",btn)
+        chk.Name="chk"; chk.Size=UDim2.new(0,14,0,14); chk.Position=UDim2.new(1,-18,0.5,-7)
+        chk.BackgroundColor3=sel and C.orange or C.border; chk.BorderSizePixel=0
+        Instance.new("UICorner",chk).CornerRadius=UDim.new(0,3)
+        local tick=Instance.new("TextLabel",chk)
+        tick.Text="✓"; tick.Size=UDim2.new(1,0,1,0); tick.BackgroundTransparency=1
+        tick.TextColor3=Color3.fromRGB(255,255,255); tick.Font=Enum.Font.GothamBold
+        tick.TextSize=9; tick.Visible=sel
+
+        campBtns[name]=btn
+        local bname=name
+        btn.MouseButton1Click:Connect(function()
+            if farmTargets[bname] then farmTargets[bname]=nil else farmTargets[bname]=true end
+            local nowSel=farmTargets[bname]==true
+            btn.BackgroundColor3=nowSel and Color3.fromRGB(50,30,0) or Color3.fromRGB(10,15,22)
+            Instance.new("UIStroke",btn).Color=nowSel and C.orange or C.border
+            nLbl.TextColor3=nowSel and C.orange or C.text
+            chk.BackgroundColor3=nowSel and C.orange or C.border
+            tick.Visible=nowSel
+            -- update status
+            local cnt=0; for _,_ in pairs(farmTargets) do cnt=cnt+1 end
+            FSStatus.Text=(states.farmActive and "ON" or "OFF").." · "..cnt.." target(s)"
+            saveSettings()
+        end)
+    end
+end
+
+FSearchBox:GetPropertyChangedSignal("Text"):Connect(function() buildCampList(FSearchBox.Text) end)
+FRefreshBtn.MouseButton1Click:Connect(function() buildCampList(FSearchBox.Text) end)
+task.delay(1.5, function() buildCampList(""); refreshTeamList() end)
+
+-- ── Auto Team Switch Helper ──────────────────────────────────
+local function applyPresetTeam(key)
+    local slots=presetTeams[key]
+    if not slots then return end
+    local hasAny=false
+    for _,v in pairs(slots) do if v~="" then hasAny=true break end end
+    if not hasAny then return end
+    pcall(function() SquadUpdate:FireServer(slots) end)
+    SLbl.Text="🔀 Auto-switched to "..key.." team"
+end
+
+-- ── Farm Loop ─────────────────────────────────────────────────
+local farmIndex=1
+local farmTargetList={}  -- ordered list built each cycle
+
+task.spawn(function()
+    while true do
+        if states.farmActive then
+            -- update battle indicator
+            local inBattle=isInBattle()
+            if inBattle then
+                FSBattle.Text="● In battle"; FSBattle.TextColor3=C.green
+                task.wait(2)
+            else
+                FSBattle.Text="● Not in battle"; FSBattle.TextColor3=C.sub
+
+                -- build ordered target list
+                farmTargetList={}
+                for n,_ in pairs(farmTargets) do table.insert(farmTargetList,n) end
+
+                if #farmTargetList==0 then
+                    FSStatus.Text="ON · No targets selected"
+                    task.wait(2)
+                else
+                    -- pick next target (round-robin)
+                    if farmIndex>#farmTargetList then farmIndex=1 end
+                    local target=farmTargetList[farmIndex]
+                    farmIndex=farmIndex+1
+
+                    FSStatus.Text="⚔ Firing: "..target
+                    SLbl.Text="Farm: "..target
+
+                    -- auto switch to Farm team
+                    applyPresetTeam("Farm")
+                    task.wait(0.2)
+
+                    -- teleport to target model (if TP not disabled)
+                    if not states.farmNoTP then
+                        local root=getRoot()
+                        if root then
+                            pcall(function()
+                                local model=workspace:WaitForChild("Campaign",3):WaitForChild(target,3)
+                                local pos=model:GetModelCFrame().Position
+                                local dist=(root.Position-pos).Magnitude
+                                if dist>30 then
+                                    root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                                    task.wait(0.3)
+                                end
+                            end)
+                        end
+                    end
+
+                    -- fire RequestBattle
+                    pcall(function()
+                        local model=workspace:WaitForChild("Campaign",3):WaitForChild(target,3)
+                        RequestBattle2:FireServer(model)
+                    end)
+                    task.wait(1)
+                end
+            end
+        else
+            FSBattle.Text="● Not in battle"; FSBattle.TextColor3=C.sub
+            task.wait(0.5)
+        end
+    end
+end)
+
+-- update farm status dot periodically
+task.spawn(function()
+    while true do task.wait(1)
+        local inBattle=isInBattle()
+        if states.farmActive then
+            FSBattle.Text= inBattle and "● In battle" or "● Not in battle"
+            FSBattle.TextColor3= inBattle and C.green or C.sub
+        end
+        local cnt=0; for _,_ in pairs(farmTargets) do cnt=cnt+1 end
+        if states.farmActive then
+            FSStatus.Text="ON · "..cnt.." target(s)"
+        end
+    end
+end)
+
+
+-- ============================================================
+--  FEATURE LOGIC
+-- ============================================================
+UserInputService.JumpRequest:Connect(function()
+    if states.infJump then local h=getHuman() if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end
+end)
+
+RunService.Stepped:Connect(function()
+    if states.noclip then
+        local c=getChar(); if c then
+            for _,p in pairs(c:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide=false end end
+        end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if states.godMode then local h=getHuman() if h then h.MaxHealth=math.huge; h.Health=math.huge end end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if states.fly then
+        local root=getRoot(); if not root then return end
+        if not flyBV then flyBV=Instance.new("BodyVelocity",root); flyBV.MaxForce=Vector3.new(1e5,1e5,1e5); flyBV.Velocity=Vector3.zero end
+        if not flyBG then flyBG=Instance.new("BodyGyro",root); flyBG.MaxTorque=Vector3.new(1e5,1e5,1e5); flyBG.D=100 end
+        local cam=workspace.CurrentCamera; local spd=60; local mv=Vector3.zero
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then mv=mv+cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then mv=mv-cam.CFrame.LookVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then mv=mv-cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then mv=mv+cam.CFrame.RightVector end
+        if UserInputService:IsKeyDown(Enum.KeyCode.E) then mv=mv+Vector3.new(0,1,0) end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Q) then mv=mv-Vector3.new(0,1,0) end
+        if mv.Magnitude>0 then mv=mv.Unit end
+        flyBV.Velocity=mv*spd; flyBG.CFrame=cam.CFrame
+        local h=getHuman() if h then h:ChangeState(Enum.HumanoidStateType.Physics) end
+    else
+        if flyBV then flyBV:Destroy() flyBV=nil end
+        if flyBG then flyBG:Destroy() flyBG=nil end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if states.fullBright then
+        Lighting.Ambient=Color3.fromRGB(255,255,255); Lighting.OutdoorAmbient=Color3.fromRGB(255,255,255)
+        Lighting.Brightness=10; Lighting.FogEnd=1e6; Lighting.FogStart=1e6
+    end
+end)
+
+task.spawn(function()
+    while task.wait(55) do
+        if states.antiAfk then
+            pcall(function() VirtualUser:CaptureController(); VirtualUser:ClickButton2(Vector2.new()) end)
+            local r=getRoot(); if r then r.CFrame=r.CFrame*CFrame.new(0,0,0.001) end
+        end
+    end
+end)
+
+local function buildESP(p)
+    if p==LP then return end
+    local char=p.Character; if not char then return end
+    -- only use the actual Humanoid head, not pet/accessory parts named "Head"
+    local human=char:FindFirstChildOfClass("Humanoid"); if not human then return end
+    local head=char:FindFirstChild("Head"); if not head or not head:IsA("BasePart") then return end
+    if espBillboards[p.Name] then pcall(function() espBillboards[p.Name]:Destroy() end) espBillboards[p.Name]=nil end
+    local ok,bb=pcall(function()
+        local b=Instance.new("BillboardGui",head)
+        b.Size=UDim2.new(0,100,0,26); b.StudsOffset=Vector3.new(0,2.8,0); b.AlwaysOnTop=true
+        local lbl=Instance.new("TextLabel",b)
+        lbl.Size=UDim2.new(1,0,1,0); lbl.BackgroundTransparency=1
+        lbl.Text=p.Name; lbl.TextColor3=C.accent
+        lbl.Font=Enum.Font.GothamBold; lbl.TextSize=13; lbl.TextStrokeTransparency=0.3
+        return b
+    end)
+    if ok then espBillboards[p.Name]=bb end
+end
+RunService.Heartbeat:Connect(function()
+    if states.esp then
+        for _,p in pairs(Players:GetPlayers()) do
+            if p~=LP then
+                local head=p.Character and p.Character:FindFirstChild("Head")
+                if head and not espBillboards[p.Name] then buildESP(p)
+                elseif not head and espBillboards[p.Name] then
+                    pcall(function() espBillboards[p.Name]:Destroy() end); espBillboards[p.Name]=nil
+                end
+            end
+        end
+    end
+end)
+
+LP.CharacterAdded:Connect(function(c)
+    task.wait(1)
+    local h=c:WaitForChild("Humanoid"); h.WalkSpeed=walkSpeed
+    if flyBV then flyBV:Destroy() flyBV=nil end
+    if flyBG then flyBG:Destroy() flyBG=nil end
+end)
+
+-- ── Boss loops ────────────────────────────────────────────────
+local function bossLoop(key,path)
+    task.spawn(function()
+        while true do
+            if states[key] then
+                -- skip if already in a battle
+                if isInBattle() then
+                    SLbl.Text="⏳ In battle, waiting: "..path
+                    task.wait(2)
+                elseif not isBossPresent(path) then
+                    SLbl.Text="⏳ Boss not found: "..path
+                    task.wait(1)
+                else
+                    -- auto switch to Raid team
+                    applyPresetTeam("Raid")
+                    task.wait(0.2)
+                    pcall(function()
+                        local t=workspace:WaitForChild("Campaign",3):WaitForChild(path,3)
+                        RequestBattle:FireServer(t)
+                    end)
+                    SLbl.Text="⚔ Fired: "..path
+                    task.wait(8)
+                    if states[key] and not isInBattle() and isBossPresent(path) and not isBossDead(path) then
+                        pcall(function()
+                            local t=workspace:WaitForChild("Campaign",3):WaitForChild(path,3)
+                            RequestBattle:FireServer(t)
+                        end)
+                        SLbl.Text="🔁 Re-fired: "..path
+                    end
+                    task.wait(autoFightDelay)
+                end
+            else task.wait(0.2) end
+        end
+    end)
+end
+bossLoop("autoBoros","Boros")
+bossLoop("autoZamasu","Fusion Zamasu (Corrupted)")
+bossLoop("autoSukuna","Heian Era Sukuna")
+bossLoop("autoAllForOne","All For One")
+bossLoop("autoDioHeaven","Dio Over Heaven")
+bossLoop("autoMadara","Madara Ten Tails")
+
+-- ── Auto save ─────────────────────────────────────────────────
+task.spawn(function() while true do task.wait(5); saveSettings() end end)
+
+-- ── Apply walk speed ──────────────────────────────────────────
+task.spawn(function() task.wait(1); local h=getHuman(); if h then h.WalkSpeed=walkSpeed end end)
+
+-- ── Status dot pulse ─────────────────────────────────────────
+task.spawn(function()
+    while true do task.wait(1.2)
+        local anyOn=false; for _,v in pairs(states) do if v then anyOn=true break end end
+        if anyOn then
+            TweenService:Create(SDot,TweenInfo.new(0.5),{BackgroundColor3=C.green}):Play()
+            task.wait(0.5)
+            TweenService:Create(SDot,TweenInfo.new(0.5),{BackgroundColor3=C.accent}):Play()
+        end
+    end
+end)
+
+-- ── Activate default tab ──────────────────────────────────────
+switchTab("Features")
+updateChainPreview(mergeTargetBase)
+
+local msg=next(LS) and "✓ Settings restored" or "Ready · v4.0"
+SLbl.Text=msg; print("[AniPixels v4.0] Loaded. "..msg)
