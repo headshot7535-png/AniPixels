@@ -159,6 +159,41 @@ ScreenGui.Name="AniPixelsGUI"; ScreenGui.ResetOnSpawn=false
 ScreenGui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent=LP.PlayerGui
 
+-- ── Floating toggle icon button ──────────────────────────────
+local IconBtn=Instance.new("ImageButton",ScreenGui)
+IconBtn.Image="rbxassetid://3117561276"
+IconBtn.Size=UDim2.new(0,54,0,54)
+IconBtn.Position=UDim2.new(0,10,0.5,-27)
+IconBtn.BackgroundColor3=Color3.fromRGB(5,5,15)
+IconBtn.BorderSizePixel=0; IconBtn.ZIndex=20; IconBtn.Visible=true
+IconBtn.ScaleType=Enum.ScaleType.Fit
+Instance.new("UICorner",IconBtn).CornerRadius=UDim.new(1,0)
+local iStroke=Instance.new("UIStroke",IconBtn)
+iStroke.Color=Color3.fromRGB(0,180,255); iStroke.Thickness=2.5; iStroke.Transparency=0.2
+
+-- dragging for icon btn
+local iconDragging=false; local iconDragStart; local iconStartPos
+IconBtn.InputBegan:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1 then
+        iconDragging=true; iconDragStart=i.Position
+        iconStartPos=IconBtn.Position
+    end
+end)
+IconBtn.InputEnded:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.MouseButton1 then
+        iconDragging=false
+    end
+end)
+game:GetService("UserInputService").InputChanged:Connect(function(i)
+    if iconDragging and i.UserInputType==Enum.UserInputType.MouseMovement then
+        local delta=i.Position-iconDragStart
+        IconBtn.Position=UDim2.new(
+            iconStartPos.X.Scale, iconStartPos.X.Offset+delta.X,
+            iconStartPos.Y.Scale, iconStartPos.Y.Offset+delta.Y
+        )
+    end
+end)
+
 local W,H=360,620
 local Main=Instance.new("Frame",ScreenGui)
 Main.Name="Main"; Main.Size=UDim2.new(0,W,0,H)
@@ -168,6 +203,13 @@ Main.Active=true; Main.Draggable=true; Main.ClipsDescendants=true
 Instance.new("UICorner",Main).CornerRadius=UDim.new(0,14)
 local mStroke=Instance.new("UIStroke",Main)
 mStroke.Color=C.accent; mStroke.Thickness=1.5; mStroke.Transparency=0.6
+
+-- wire icon button now that Main exists
+IconBtn.MouseButton1Click:Connect(function()
+    Main.Visible=not Main.Visible
+    IconBtn.BackgroundColor3=Main.Visible and Color3.fromRGB(5,5,15) or Color3.fromRGB(0,0,0)
+    iStroke.Transparency=Main.Visible and 0.2 or 0.7
+end)
 
 -- glow bar top
 local GlowBar=Instance.new("Frame",Main)
@@ -207,7 +249,7 @@ XBtn.Text="✕"; XBtn.Size=UDim2.new(0,28,0,28); XBtn.Position=UDim2.new(1,-38,0
 XBtn.BackgroundColor3=Color3.fromRGB(140,25,35); XBtn.TextColor3=Color3.fromRGB(255,255,255)
 XBtn.Font=Enum.Font.GothamBold; XBtn.TextSize=13; XBtn.BorderSizePixel=0
 Instance.new("UICorner",XBtn).CornerRadius=UDim.new(0,7)
-XBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
+XBtn.MouseButton1Click:Connect(function() Main.Visible=false end)
 
 -- ── Tab Bar ───────────────────────────────────────────────────
 local TabBar=Instance.new("Frame",Main)
@@ -524,7 +566,7 @@ local function isBossDead(p)
     local h=b:FindFirstChildOfClass("Humanoid"); return h and h.Health<=0 or false
 end
 
-local function MakeBossCard(icon,name,path,key,order)
+local function MakeBossCard(icon,name,path,key,order,assetName)
     local Card=Instance.new("Frame",PBosses)
     Card.Size=UDim2.new(1,-10,0,54); Card.BackgroundColor3=C.card
     Card.BorderSizePixel=0; Card.LayoutOrder=order
@@ -560,6 +602,26 @@ local function MakeBossCard(icon,name,path,key,order)
         fBtn.Text="✓"; fBtn.BackgroundColor3=Color3.fromRGB(20,70,30)
         task.delay(1.5,function() fBtn.Text="▶"; fBtn.BackgroundColor3=Color3.fromRGB(55,20,85) end)
         SLbl.Text="Fired: "..name
+    end)
+
+    -- teleport button
+    local tpBtn=Instance.new("TextButton",Card)
+    tpBtn.Text="📍"; tpBtn.Size=UDim2.new(0,32,0,32); tpBtn.Position=UDim2.new(1,-174,0.5,-16)
+    tpBtn.BackgroundColor3=Color3.fromRGB(0,60,40); tpBtn.TextColor3=Color3.fromRGB(0,220,120)
+    tpBtn.Font=Enum.Font.GothamBold; tpBtn.TextSize=14; tpBtn.BorderSizePixel=0
+    Instance.new("UICorner",tpBtn).CornerRadius=UDim.new(0,8)
+    tpBtn.MouseButton1Click:Connect(function()
+        local root=getRoot()
+        if not root then SLbl.Text="No character"; return end
+        pcall(function()
+            local bosses=game:GetService("ReplicatedStorage"):WaitForChild("Assets",3):WaitForChild("Bosses",3)
+            local model=bosses:WaitForChild(assetName or name,3)
+            local cf=model:GetModelCFrame()
+            root.CFrame=CFrame.new(cf.Position+Vector3.new(0,5,0))
+            SLbl.Text="TP → "..name
+            tpBtn.Text="✓"
+            task.delay(1.5,function() tpBtn.Text="📍" end)
+        end)
     end)
 
     -- auto label
@@ -603,14 +665,15 @@ local function MakeBossCard(icon,name,path,key,order)
 end
 
 local bossConfig={
-    {"👹","Boros","Boros","autoBoros",2},
-    {"💀","Fusion Zamasu","Fusion Zamasu (Corrupted)","autoZamasu",3},
-    {"🩸","Heian Era Sukuna","Heian Era Sukuna","autoSukuna",4},
-    {"🖤","All For One","All For One","autoAllForOne",5},
-    {"🌙","Dio Over Heaven","Dio Over Heaven","autoDioHeaven",6},
-    {"🔴","Madara Ten Tails","Madara Ten Tails","autoMadara",7},
+    -- icon, display name, campaign path, stateKey, order, assetName in RS.Assets.Bosses
+    {"👹","Boros","Boros","autoBoros",2,"Boros"},
+    {"💀","Fusion Zamasu","Fusion Zamasu (Corrupted)","autoZamasu",3,"Fusion Zamasu (Corrupted)"},
+    {"🩸","Heian Era Sukuna","Heian Era Sukuna","autoSukuna",4,"Heian Era Sukuna"},
+    {"🖤","All For One","All For One","autoAllForOne",5,"All For One"},
+    {"🌙","Dio Over Heaven","Dio Over Heaven","autoDioHeaven",6,"Dio Over Heaven"},
+    {"🔴","Madara Ten Tails","Madara Ten Tails","autoMadara",7,"Madara Ten Tails"},
 }
-for _,cfg in ipairs(bossConfig) do MakeBossCard(cfg[1],cfg[2],cfg[3],cfg[4],cfg[5]) end
+for _,cfg in ipairs(bossConfig) do MakeBossCard(cfg[1],cfg[2],cfg[3],cfg[4],cfg[5],cfg[6]) end
 
 SectionLabel(PBosses,"Fight Interval",8)
 MakeSliderCard(PBosses,"Fight Interval","seconds between auto fight attempts",9,0.3,10,autoFightDelay,
