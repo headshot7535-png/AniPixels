@@ -41,7 +41,8 @@ local states = {
     autoBoros=false, autoZamasu=false, autoSukuna=false,
     autoAllForOne=false, autoDioHeaven=false, autoMadara=false,
     mergeActive=false,
-    farmNoTP=false, farmActive=false,
+    farmNoTP=false,
+    bossNoTP=false, farmActive=false,
     serverHop=false,
     dragonBall=false,
     doorUnlock=false,
@@ -924,6 +925,7 @@ local function sendWebhook(eventType)
 end
 
 SectionLabel(PBosses,"Auto Fight",1)
+MakeToggleCard(PBosses,"🚫","Disable Boss TP","Don't teleport to boss before firing",2,"bossNoTP")
 
 local function isBossPresent(p) local c=workspace:FindFirstChild("Campaign") return c and c:FindFirstChild(p)~=nil end
 local function isBossDead(p)
@@ -2198,16 +2200,18 @@ local function bossLoop(key,path)
                     end)
                     if bossModel then
                         -- TP to boss if needed
-                        pcall(function()
-                            local root = getRoot()
-                            if root then
-                                local pos = bossModel:GetModelCFrame().Position
-                                if (root.Position-pos).Magnitude > 50 then
-                                    root.CFrame = CFrame.new(pos+Vector3.new(0,5,0))
-                                    task.wait(0.5)
+                        if not states.bossNoTP then
+                            pcall(function()
+                                local root = getRoot()
+                                if root then
+                                    local pos = bossModel:GetModelCFrame().Position
+                                    if (root.Position-pos).Magnitude > 50 then
+                                        root.CFrame = CFrame.new(pos+Vector3.new(0,5,0))
+                                        task.wait(0.5)
+                                    end
                                 end
-                            end
-                        end)
+                            end)
+                        end
                         pcall(function() RequestBattle:FireServer(bossModel) end)
                         SLbl.Text="⚔ Fired: "..path
                         task.wait(8)
