@@ -2542,8 +2542,9 @@ task.spawn(function()
 
     while true do
         if states.serverHop and not isHopping then
-            -- wait for server to load dragon balls
-            task.wait(10)
+            -- wait hopDelay seconds for server to load dragon balls
+            SLbl.Text = "🌐 Waiting "..hopDelay.."s for balls to spawn..."
+            task.wait(hopDelay)
 
             local ballCount = countDragonBalls()
             SLbl.Text = "🌐 Server check: "..ballCount.."/7 Dragon Balls"
