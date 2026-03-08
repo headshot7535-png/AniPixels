@@ -23,8 +23,8 @@ local function getRoot()  local c=getChar() return c and c:FindFirstChild("Human
 -- ── Re-execute guard (prevent double load) ───────────────────
 if _G.AniPixelsRunning then
     pcall(function()
-        -- signal all old loops to stop by replacing the kill token
-        _G.AniPixels_Kill = nil
+        -- signal all old loops to stop by incrementing token
+        _G.AniPixels_Token = (_G.AniPixels_Token or 0) + 1
         if LP and LP.PlayerGui then
             local old = LP.PlayerGui:FindFirstChild("AniPixelsGUI")
             if old then old:Destroy() end
@@ -32,9 +32,9 @@ if _G.AniPixelsRunning then
     end)
 else
     _G.AniPixelsRunning = true
--- kill token: each execution gets a unique token; loops break when token changes
-local _kill = {}
-_G.AniPixels_Kill = _kill
+-- kill token: increment a global counter each execution; loops stop if token changes
+_G.AniPixels_Token = (_G.AniPixels_Token or 0) + 1
+local _myToken = _G.AniPixels_Token
 end
 
 -- ============================================================
@@ -1996,7 +1996,7 @@ end)
 
 task.spawn(function()
     while true do
-        if _G.AniPixels_Kill ~= _kill then break end
+        if _G.AniPixels_Token ~= _myToken then break end
         if not FSBattle or not FSBattle.Parent then break end
         if states.farmActive then
             -- update battle indicator
@@ -2067,7 +2067,7 @@ end)
 -- update farm status dot periodically
 task.spawn(function()
     while true do task.wait(1)
-        if _G.AniPixels_Kill ~= _kill then break end
+        if _G.AniPixels_Token ~= _myToken then break end
         if not FSBattle or not FSBattle.Parent then break end
         local inBattle=isInBattle()
         if states.farmActive then
@@ -2183,7 +2183,7 @@ end)
 local function bossLoop(key,path)
     task.spawn(function()
         while true do
-            if _G.AniPixels_Kill ~= _kill then break end
+            if _G.AniPixels_Token ~= _myToken then break end
             if states[key] then
                 -- skip if already in a battle
                 if isInBattle() then
@@ -2225,7 +2225,7 @@ bossLoop("autoMadara","Madara Ten Tails")
 -- ── Door Unlock loop ─────────────────────────────────────────
 task.spawn(function()
     while true do
-        if _G.AniPixels_Kill ~= _kill then break end
+        if _G.AniPixels_Token ~= _myToken then break end
         if states.doorUnlock then
             -- collect all missing pets across all selected doors
             local allMissing = {}
@@ -2311,7 +2311,7 @@ end
 
 task.spawn(function()
     while true do
-        if _G.AniPixels_Kill ~= _kill then break end
+        if _G.AniPixels_Token ~= _myToken then break end
         if states.dragonBall then
             local root = getRoot()
             if not root then task.wait(1); continue end
@@ -2530,7 +2530,7 @@ task.spawn(function()
     end
 
     while true do
-        if _G.AniPixels_Kill ~= _kill then break end
+        if _G.AniPixels_Token ~= _myToken then break end
         if states.serverHop and not isHopping then
             -- wait for server to load dragon balls
             task.wait(10)
@@ -2570,7 +2570,7 @@ end)
 task.spawn(function()
     local FF = game:GetService("ReplicatedStorage"):WaitForChild("State",5):WaitForChild("FastForward",5)
     while true do
-        if _G.AniPixels_Kill ~= _kill then break end
+        if _G.AniPixels_Token ~= _myToken then break end
         task.wait(0.5)
         if states.fastForward then
             if FF and FF.Value ~= 0.25 then FF.Value = 0.25 end
