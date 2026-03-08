@@ -47,6 +47,7 @@ local states = {
     autoReExec=false,
 }
 local walkSpeed   = 16
+local hopDelay    = 10  -- seconds to wait before hopping
 local flyBV, flyBG
 local espBillboards = {}
 local autoFightDelay = 1.5
@@ -79,6 +80,7 @@ local function encodeSettings()
     for k,v in pairs(states) do t[#t+1]='"'..k..'":'..(v and"true"or"false") end
     t[#t+1]='"walkSpeed":'..walkSpeed
     t[#t+1]='"autoFightDelay":'..autoFightDelay
+    t[#t+1]='"hopDelay":'..hopDelay
     t[#t+1]='"mergeThreshold":'..mergeThreshold
     t[#t+1]='"mergeTargetBase":"'..mergeTargetBase..'"'
     -- farm targets
@@ -124,6 +126,7 @@ end)
 for k,v in pairs(LS) do if states[k]~=nil then states[k]=v end end
 if LS.walkSpeed      then walkSpeed=LS.walkSpeed end
 if LS.autoFightDelay then autoFightDelay=LS.autoFightDelay end
+if LS.hopDelay then hopDelay=LS.hopDelay end
 if LS.mergeThreshold then mergeThreshold=LS.mergeThreshold end
 if LS.mergeTargetBase then mergeTargetBase=LS.mergeTargetBase end
 if LS.mergeTargets then
@@ -640,7 +643,10 @@ MakeToggleCard(PFeatures,"👁️","Player ESP","Name tags above all players",10
 SectionLabel(PFeatures,"Script",9)
 MakeToggleCard(PFeatures,"🔁","Auto Rejoin","Re-executes script on disconnect or server hop",9,"autoReExec")
 SectionLabel(PFeatures,"Server",10)
-local setServerHop=MakeToggleCard(PFeatures,"🌐","Server Hop","Auto hops to next server every 30s",10,"serverHop")
+local setServerHop=MakeToggleCard(PFeatures,"🌐","Server Hop","Hops server if no Dragon Balls found",10,"serverHop")
+MakeSliderCard(PFeatures,"Hop Delay","seconds to wait before hopping",10,3,60,hopDelay,
+    function(v) return math.floor(v).."s" end,
+    function(v) hopDelay=math.floor(v); saveSettings() end)
 
 SectionLabel(PFeatures,"Actions",11)
 MakeActionBtn(PFeatures,"📋","Print Position","Prints XYZ to output",12,C.accent,function(_,lbl)
@@ -1991,7 +1997,7 @@ task.spawn(function()
     while true do
         if states.serverHop and not isHopping then
             -- wait for server to load dragon balls
-            task.wait(3)
+            task.wait(10)
 
             local ballCount = countDragonBalls()
             SLbl.Text = "🌐 Server check: "..ballCount.."/7 Dragon Balls"
