@@ -59,6 +59,38 @@ local mergeTargetBase = ""   -- legacy single (unused)
 local mergeTargets    = {}   -- multi-select: set of base names
 -- farm
 local farmTargets   = {}   -- set of campaign model names to farm
+local farmIndex     = 1    -- round-robin index for farm targets
+local petToCampaign = {}   -- pet name -> campaign folder name
+local petNameList   = {}   -- sorted list of all pet names
+
+-- build a pet->campaign map from workspace
+local function refreshPetCampaignMap()
+    petToCampaign = {}
+    petNameList = {}
+    pcall(function()
+        local campaign = workspace:FindFirstChild("Campaign")
+        if not campaign then return end
+        local seen = {}
+        for _, model in pairs(campaign:GetChildren()) do
+            local pets = model:FindFirstChild("Pets")
+            if pets then
+                for _, pet in pairs(pets:GetChildren()) do
+                    -- use exact pet name as it appears in game
+                    if not seen[pet.Name] then
+                        seen[pet.Name] = true
+                        -- prefer non-Safari source for campaign label
+                        if not petToCampaign[pet.Name] or petToCampaign[pet.Name]=="Safari" then
+                            petToCampaign[pet.Name] = model.Name
+                        end
+                        table.insert(petNameList, pet.Name)
+                    end
+                end
+            end
+        end
+        table.sort(petNameList)
+    end)
+end
+
 local selectedDoors = {}   -- set of door names to unlock
 local farmTeam      = {}   -- current active squad {["1"]=name,...}
 local savedTeams    = {}   -- name -> {["1"]=name,...}
@@ -700,7 +732,73 @@ end)
 -- ============================================================
 --  BOSSES TAB
 -- ============================================================
-local RequestBattle=game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RequestBattle")
+local RequestBattle = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RequestBattle")
+
+-- Click the Battle button in BattleChat UI (more reliable than remotes for Safari)
+local VIM = game:GetService("VirtualInputManager")
+local function clickBattleButton()
+    local ok = false
+    pcall(function()
+        local sc = LP.PlayerGui:FindFirstChild("ScreenGui")
+        if not sc then return end
+        local btn = sc:FindFirstChild("BattleChats") and
+                    sc.BattleChats:FindFirstChild("BattleChat") and
+                    sc.BattleChats.BattleChat:FindFirstChild("Battle")
+        if btn and btn.Visible then
+            -- fire click event directly, no position needed
+            btn:FireClick()
+            ok = true
+        end
+    end)
+    return ok
+end
+
+-- Walk up to a campaign model and wait for BattleChat to appear
+-- Find the campaign model for a pet by exact name match only
+local function findCampaignModelForPet(petName)
+    local result = nil
+    pcall(function()
+        local campaign = workspace:WaitForChild("Campaign", 5)
+        for _, model in pairs(campaign:GetChildren()) do
+            local pets = model:FindFirstChild("Pets")
+            if pets and pets:FindFirstChild(petName) then
+                result = model
+                return
+            end
+        end
+    end)
+    return result
+end
+
+local function walkToCampaignAndBattle(folderName, petName)
+    local model = findCampaignModelForPet(petName or folderName)
+    if not model then return false end
+    -- TP to model if needed
+    if not states.farmNoTP then
+        pcall(function()
+            local root = getRoot()
+            if not root then return end
+            local pos = model:GetModelCFrame().Position
+            if (root.Position - pos).Magnitude > 30 then
+                root.CFrame = CFrame.new(pos + Vector3.new(0,5,0))
+                task.wait(0.5)
+            end
+        end)
+    end
+    -- fire RequestBattle with the campaign model (parent of Pets folder)
+    local ok = false
+    pcall(function()
+        RequestBattle:FireServer(model)
+        ok = true
+    end)
+    return ok
+end
+
+-- pre-populate pet->campaign map (delayed so workspace.Campaign is ready)
+task.spawn(function()
+    task.wait(2)
+    refreshPetCampaignMap()
+end)
 
 local DOOR_CONFIG = {
     ["DBZ Hell"] = {
@@ -729,7 +827,7 @@ local DOOR_CONFIG = {
         {pet="Shanks", campaign="Wild Law"},
         {pet="Queen", campaign="Wild Kaido"},
         {pet="Yamato", campaign="Wild Yamato"},
-        {pet="Law", campaign="Safari"},
+        {pet="Law", campaign="Wild Law"},
     },
     ["Jason's Chambers"] = {
         {pet="Sung Jinwoo", campaign="Wild SungJinwoo"},
@@ -755,16 +853,19 @@ local DOOR_CONFIG = {
         {pet="Maki Zenin", campaign="Sorcerer Duo"},
         {pet="Nanami", campaign="Goated Sorcerers"},
         {pet="Mahoraga", campaign="Wild Megumi"},
-        {pet="Sukuna", campaign="Safari"},
+        {pet="Sukuna", campaign="Safari", safariOnly=true},
     },
     ["Chainsaw Man Hell"] = {
         {pet="Yuji", campaign="Wild Itadori"},
         {pet="Mahito", campaign="Wild Mahito"},
         {pet="Gojo", campaign="Wild Gojo"},
+        {pet="Uraume", campaign="", safariOnly=true},
     },
     ["Shibuya"] = {
+        {pet="Gluttony", campaign="Safari", safariOnly=true},
         {pet="Lst", campaign="Wild Homunculus"},
-        {pet="Ed", campaign="Safari"},
+        {pet="Al", campaign="Safari", safariOnly=true},
+        {pet="Ed", campaign="Safari", safariOnly=true},
         {pet="Wrath", campaign="Wild Homunculus"},
     },
 }
@@ -948,7 +1049,7 @@ MakeSliderCard(PBosses,"Fight Interval","seconds between auto fight attempts",9,
 -- ============================================================
 --  MERGE TAB
 -- ============================================================
-local SquadUpdate=game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("SquadUpdate")
+local SquadUpdate = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("SquadUpdate")
 local VIM=game:GetService("VirtualInputManager")
 
 -- Merge status card
@@ -1356,7 +1457,7 @@ end)
 -- ============================================================
 --  FARM TAB
 -- ============================================================
-local RequestBattle2=game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RequestBattle")
+local RequestBattle2 = RequestBattle
 
 local function isInBattle()
     pcall(function()
@@ -1464,6 +1565,21 @@ local presetDefs={
 local presetTeams={}
 for _,pd in ipairs(presetDefs) do
     presetTeams[pd.key]=savedTeams[pd.key] or {["1"]="",["2"]="",["3"]="",["4"]=""}
+end
+
+local function applyPresetTeam(key)
+    local team = presetTeams[key]
+    if not team then return end
+    local slots = {}
+    local hasAny = false
+    for i = 1, 4 do
+        local p = team[tostring(i)] or ""
+        slots[tostring(i)] = p
+        if p ~= "" then hasAny = true end
+    end
+    if hasAny then
+        pcall(function() SquadUpdate:FireServer(slots) end)
+    end
 end
 
 local activePreset=nil   -- which preset is selected in the card
@@ -1637,8 +1753,13 @@ local function checkOwned(petName)
     pcall(function()
         local dInv = LP:FindFirstChild("DoodleInv")
         if dInv then
+            -- check base name and all tiers (Giant/Mega/Titan)
+            local variants = {petName, "Giant "..petName, "Mega "..petName, "Titan "..petName, "Sparking "..petName}
             for _,iv in pairs(dInv:GetChildren()) do
-                if iv.Name==petName and iv.Value>0 then owned=true end
+                for _,v in ipairs(variants) do
+                    if iv.Name==v and iv.Value>0 then owned=true; break end
+                end
+                if owned then break end
             end
         end
     end)
@@ -1724,9 +1845,29 @@ local function updateDoorReqDisplay(doorName)
     local needs = DOOR_CONFIG[doorName] or {}
     local parts = {}
     for _,n in ipairs(needs) do
-        parts[#parts+1] = (checkOwned(n.pet) and "✓ " or "✗ ")..n.pet
+        local have = checkOwned(n.pet)
+        local label = n.pet
+        -- show which tier they actually own
+        if not have then
+            label = "✗ "..n.pet
+        else
+            -- find which tier they have for display
+            local tiers = {"Titan ","Mega ","Giant ","Sparking ",""}
+            local dInv = LP:FindFirstChild("DoodleInv")
+            if dInv then
+                for _,prefix in ipairs(tiers) do
+                    local iv = dInv:FindFirstChild(prefix..n.pet)
+                    if iv and iv.Value > 0 then
+                        label = "✓ "..(prefix..n.pet)
+                        break
+                    end
+                end
+            end
+        end
+        if n.safariOnly and not have then label = "⚠ "..n.pet.." (Safari)" end
+        parts[#parts+1] = label
     end
-    DoorStatusLbl.Text = "  "..doorName..": "..table.concat(parts, " · ")
+    DoorStatusLbl.Text = "  "..table.concat(parts, " · ")
 end
 
 local setDoorUnlock = MakeToggleCard(PFarm,"🔓","Auto Door Unlock","Farms required pets for selected doors",4,"doorUnlock")
@@ -1734,31 +1875,6 @@ task.defer(function() if states.doorUnlock and setDoorUnlock then setDoorUnlock(
 
 SectionLabel(PFarm,"Campaign Targets",6)
 
--- build a pet->campaign map from workspace
-local petToCampaign = {}
-local petNameList = {}
-
-local function refreshPetCampaignMap()
-    petToCampaign = {}
-    petNameList = {}
-    pcall(function()
-        local campaign = workspace:FindFirstChild("Campaign")
-        if not campaign then return end
-        for _, folder in pairs(campaign:GetChildren()) do
-            local pets = folder:FindFirstChild("Pets")
-            if pets then
-                for _, pet in pairs(pets:GetChildren()) do
-                    if not petToCampaign[pet.Name] then
-                        petToCampaign[pet.Name] = folder.Name
-                        table.insert(petNameList, pet.Name)
-                    end
-                end
-            end
-        end
-        -- sort alphabetically
-        table.sort(petNameList)
-    end)
-end
 refreshPetCampaignMap()
 
 -- search box
@@ -1898,7 +2014,11 @@ task.spawn(function()
                     farmIndex=farmIndex+1
 
                     -- resolve pet name to campaign folder
-                    local campFolder = (petToCampaign and petToCampaign[target]) or target
+                    local campFolder = petToCampaign[target]
+                    if not campFolder or campFolder=="" then
+                        FSStatus.Text="⚠ No campaign found for: "..target
+                        task.wait(2); continue
+                    end
                     FSStatus.Text="⚔ "..target.." ("..campFolder..")"
                     SLbl.Text="Farm: "..target
 
@@ -1906,27 +2026,27 @@ task.spawn(function()
                     applyPresetTeam("Farm")
                     task.wait(0.2)
 
-                    -- teleport to campaign model (if TP not disabled)
-                    if not states.farmNoTP then
-                        local root=getRoot()
-                        if root then
+                    -- find correct model and fire RequestBattle
+                    local battleModel = findCampaignModelForPet(target)
+                    if battleModel then
+                        FSStatus.Text="⚔ "..target.." ("..battleModel.Name..")"
+                        SLbl.Text="Farm: "..target
+                        if not states.farmNoTP then
                             pcall(function()
-                                local model=workspace:WaitForChild("Campaign",3):WaitForChild(campFolder,3)
-                                local pos=model:GetModelCFrame().Position
-                                local dist=(root.Position-pos).Magnitude
-                                if dist>30 then
+                                local root=getRoot()
+                                if not root then return end
+                                local pos=battleModel:GetModelCFrame().Position
+                                if (root.Position-pos).Magnitude>30 then
                                     root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
-                                    task.wait(0.3)
+                                    task.wait(0.5)
                                 end
                             end)
                         end
+                        pcall(function() RequestBattle:FireServer(battleModel) end)
+                    else
+                        FSStatus.Text="⚠ No model found for: "..target
+                        task.wait(2)
                     end
-
-                    -- fire RequestBattle
-                    pcall(function()
-                        local model=workspace:WaitForChild("Campaign",3):WaitForChild(campFolder,3)
-                        RequestBattle:FireServer(model)
-                    end)
                     task.wait(1)
                 end
             end
@@ -2100,19 +2220,13 @@ task.spawn(function()
             for doorName,_ in pairs(selectedDoors) do
                 local needs = DOOR_CONFIG[doorName] or {}
                 for _, n in ipairs(needs) do
-                    local have = false
-                    pcall(function()
-                        if dInv then
-                            for _, iv in pairs(dInv:GetChildren()) do
-                                if iv.Name==n.pet and iv.Value>0 then have=true; break end
-                            end
-                        end
-                    end)
+                    -- checkOwned checks base name + Giant/Mega/Titan/Sparking tiers
+                    local have = checkOwned(n.pet)
                     if not have then
-                        -- avoid duplicate campaigns
+                        -- avoid duplicates
                         local dup=false
                         for _,m in ipairs(allMissing) do if m.pet==n.pet then dup=true; break end end
-                        if not dup then table.insert(allMissing, {pet=n.pet, campaign=n.campaign, door=doorName}) end
+                        if not dup then table.insert(allMissing, {pet=n.pet, door=doorName}) end
                     end
                 end
             end
@@ -2138,21 +2252,23 @@ task.spawn(function()
                 local root = getRoot()
                 if not root then task.wait(1); continue end
 
-                if not states.farmNoTP then
-                    pcall(function()
-                        local model = workspace:WaitForChild("Campaign",3):WaitForChild(target.campaign,3)
-                        local pos = model:GetModelCFrame().Position
-                        if (root.Position-pos).Magnitude > 30 then
-                            root.CFrame = CFrame.new(pos+Vector3.new(0,5,0))
-                            task.wait(0.3)
-                        end
-                    end)
+                -- find model by exact pet name and fire RequestBattle
+                local battleModel = findCampaignModelForPet(target.pet)
+                if battleModel then
+                    if not states.farmNoTP then
+                        pcall(function()
+                            local pos = battleModel:GetModelCFrame().Position
+                            if (root.Position-pos).Magnitude > 30 then
+                                root.CFrame = CFrame.new(pos+Vector3.new(0,5,0))
+                                task.wait(0.5)
+                            end
+                        end)
+                    end
+                    pcall(function() RequestBattle:FireServer(battleModel) end)
+                else
+                    DoorStatusLbl.Text = "⚠ Can't find model for: "..target.pet
+                    task.wait(2)
                 end
-
-                pcall(function()
-                    local model = workspace:WaitForChild("Campaign",3):WaitForChild(target.campaign,3)
-                    RequestBattle:FireServer(model)
-                end)
 
                 task.wait(autoFightDelay + 1)
             end
