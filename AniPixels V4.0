@@ -23,8 +23,6 @@ local function getRoot()  local c=getChar() return c and c:FindFirstChild("Human
 -- ── Re-execute guard (prevent double load) ───────────────────
 if _G.AniPixelsRunning then
     pcall(function()
-        -- signal all old loops to stop by incrementing token
-        _G.AniPixels_Token = (_G.AniPixels_Token or 0) + 1
         if LP and LP.PlayerGui then
             local old = LP.PlayerGui:FindFirstChild("AniPixelsGUI")
             if old then old:Destroy() end
@@ -32,9 +30,6 @@ if _G.AniPixelsRunning then
     end)
 else
     _G.AniPixelsRunning = true
--- kill token: increment a global counter each execution; loops stop if token changes
-_G.AniPixels_Token = (_G.AniPixels_Token or 0) + 1
-local _myToken = _G.AniPixels_Token
 end
 
 -- ============================================================
@@ -1996,7 +1991,6 @@ end)
 
 task.spawn(function()
     while true do
-        if _G.AniPixels_Token ~= _myToken then break end
         if not FSBattle or not FSBattle.Parent then break end
         if states.farmActive then
             -- update battle indicator
@@ -2067,7 +2061,6 @@ end)
 -- update farm status dot periodically
 task.spawn(function()
     while true do task.wait(1)
-        if _G.AniPixels_Token ~= _myToken then break end
         if not FSBattle or not FSBattle.Parent then break end
         local inBattle=isInBattle()
         if states.farmActive then
@@ -2183,7 +2176,6 @@ end)
 local function bossLoop(key,path)
     task.spawn(function()
         while true do
-            if _G.AniPixels_Token ~= _myToken then break end
             if states[key] then
                 -- skip if already in a battle
                 if isInBattle() then
@@ -2196,18 +2188,35 @@ local function bossLoop(key,path)
                     -- auto switch to Raid team
                     applyPresetTeam("Raid")
                     task.wait(0.2)
+                    -- find the boss model across all campaign models
+                    local bossModel = nil
                     pcall(function()
-                        local t=workspace:WaitForChild("Campaign",3):WaitForChild(path,3)
-                        RequestBattle:FireServer(t)
+                        local campaign = workspace:WaitForChild("Campaign",3)
+                        for _, m in pairs(campaign:GetChildren()) do
+                            if m.Name == path then bossModel = m; break end
+                        end
                     end)
-                    SLbl.Text="⚔ Fired: "..path
-                    task.wait(8)
-                    if states[key] and not isInBattle() and isBossPresent(path) and not isBossDead(path) then
+                    if bossModel then
+                        -- TP to boss if needed
                         pcall(function()
-                            local t=workspace:WaitForChild("Campaign",3):WaitForChild(path,3)
-                            RequestBattle:FireServer(t)
+                            local root = getRoot()
+                            if root then
+                                local pos = bossModel:GetModelCFrame().Position
+                                if (root.Position-pos).Magnitude > 50 then
+                                    root.CFrame = CFrame.new(pos+Vector3.new(0,5,0))
+                                    task.wait(0.5)
+                                end
+                            end
                         end)
-                        SLbl.Text="🔁 Re-fired: "..path
+                        pcall(function() RequestBattle:FireServer(bossModel) end)
+                        SLbl.Text="⚔ Fired: "..path
+                        task.wait(8)
+                        if states[key] and not isInBattle() and isBossPresent(path) and not isBossDead(path) then
+                            pcall(function() RequestBattle:FireServer(bossModel) end)
+                            SLbl.Text="🔁 Re-fired: "..path
+                        end
+                    else
+                        SLbl.Text="⚠ Boss model not found: "..path
                     end
                     task.wait(autoFightDelay)
                 end
@@ -2225,7 +2234,6 @@ bossLoop("autoMadara","Madara Ten Tails")
 -- ── Door Unlock loop ─────────────────────────────────────────
 task.spawn(function()
     while true do
-        if _G.AniPixels_Token ~= _myToken then break end
         if states.doorUnlock then
             -- collect all missing pets across all selected doors
             local allMissing = {}
@@ -2311,7 +2319,6 @@ end
 
 task.spawn(function()
     while true do
-        if _G.AniPixels_Token ~= _myToken then break end
         if states.dragonBall then
             local root = getRoot()
             if not root then task.wait(1); continue end
@@ -2530,7 +2537,6 @@ task.spawn(function()
     end
 
     while true do
-        if _G.AniPixels_Token ~= _myToken then break end
         if states.serverHop and not isHopping then
             -- wait for server to load dragon balls
             task.wait(10)
@@ -2570,7 +2576,6 @@ end)
 task.spawn(function()
     local FF = game:GetService("ReplicatedStorage"):WaitForChild("State",5):WaitForChild("FastForward",5)
     while true do
-        if _G.AniPixels_Token ~= _myToken then break end
         task.wait(0.5)
         if states.fastForward then
             if FF and FF.Value ~= 0.25 then FF.Value = 0.25 end
