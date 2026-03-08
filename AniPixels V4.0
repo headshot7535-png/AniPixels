@@ -59,6 +59,7 @@ local mergeTargetBase = ""   -- legacy single (unused)
 local mergeTargets    = {}   -- multi-select: set of base names
 -- farm
 local farmTargets   = {}   -- set of campaign model names to farm
+local selectedDoors = {}   -- set of door names to unlock
 local farmTeam      = {}   -- current active squad {["1"]=name,...}
 local savedTeams    = {}   -- name -> {["1"]=name,...}
 local farmTeamName  = ""   -- active saved team name
@@ -89,6 +90,9 @@ local function encodeSettings()
     local ftnames={}
     for n,_ in pairs(farmTargets) do ftnames[#ftnames+1]=n end
     t[#t+1]='"farmTargets":"'..table.concat(ftnames,",")..'"'
+    local sdnames={}
+    for n,_ in pairs(selectedDoors) do sdnames[#sdnames+1]=n end
+    t[#t+1]='"selectedDoors":"'..table.concat(sdnames,"|")..'"'  
     -- saved teams: flat keys "Raid_1".."PVP_4"
     local presetKeys={"Raid","Farm","Trials","PVP"}
     for _,pk in ipairs(presetKeys) do
@@ -139,6 +143,11 @@ end
 if LS.farmTargets then
     for name in (LS.farmTargets..","):gmatch("([^,]+),") do
         farmTargets[name]=true
+    end
+end
+if LS.selectedDoors then
+    for name in (LS.selectedDoors.."|"):gmatch("([^|]+)|") do
+        selectedDoors[name]=true
     end
 end
 -- load preset teams from flat keys
@@ -1581,7 +1590,6 @@ MakeToggleCard(PFarm,"🚫","Disable Teleport","Farm in-place · no auto TP to t
 SectionLabel(PFarm,"Door Unlock",4)
 
 -- multi-select door list
-local selectedDoors = {}  -- set of door names to unlock
 local doorNames = {}
 for k,_ in pairs(DOOR_CONFIG) do table.insert(doorNames, k) end
 table.sort(doorNames)
@@ -1726,6 +1734,34 @@ task.defer(function() if states.doorUnlock and setDoorUnlock then setDoorUnlock(
 
 SectionLabel(PFarm,"Campaign Targets",6)
 
+-- build a pet->campaign map from workspace
+local petToCampaign = {}
+local petNameList = {}
+
+local function refreshPetCampaignMap()
+    petToCampaign = {}
+    petNameList = {}
+    pcall(function()
+        local campaign = workspace:FindFirstChild("Campaign")
+        if not campaign then return end
+        for _, folder in pairs(campaign:GetChildren()) do
+            local pets = folder:FindFirstChild("Pets")
+            if pets then
+                for _, pet in pairs(pets:GetChildren()) do
+                    if not petToCampaign[pet.Name] then
+                        petToCampaign[pet.Name] = folder.Name
+                        table.insert(petNameList, pet.Name)
+                    end
+                end
+            end
+        end
+        -- sort alphabetically
+        table.sort(petNameList)
+    end)
+end
+refreshPetCampaignMap()
+
+-- search box
 local FSearchCard=Instance.new("Frame",PFarm)
 FSearchCard.Size=UDim2.new(1,-10,0,38); FSearchCard.BackgroundColor3=C.card
 FSearchCard.BorderSizePixel=0; FSearchCard.LayoutOrder=7
@@ -1735,124 +1771,107 @@ Instance.new("UIStroke",FSearchCard).Color=C.border
 local FSearchIcon=Instance.new("TextLabel",FSearchCard)
 FSearchIcon.Text="🔍"; FSearchIcon.Size=UDim2.new(0,30,1,0); FSearchIcon.Position=UDim2.new(0,4,0,0)
 FSearchIcon.BackgroundTransparency=1; FSearchIcon.TextSize=14; FSearchIcon.Font=Enum.Font.GothamBold
-FSearchIcon.TextXAlignment=Enum.TextXAlignment.Center
 
 local FSearchBox=Instance.new("TextBox",FSearchCard)
-FSearchBox.Size=UDim2.new(1,-70,1,-10); FSearchBox.Position=UDim2.new(0,34,0,5)
+FSearchBox.Size=UDim2.new(1,-70,1,0); FSearchBox.Position=UDim2.new(0,32,0,0)
 FSearchBox.BackgroundTransparency=1; FSearchBox.TextColor3=C.text
-FSearchBox.PlaceholderText="Search campaign..."; FSearchBox.PlaceholderColor3=C.sub
-FSearchBox.Font=Enum.Font.Gotham; FSearchBox.TextSize=11; FSearchBox.BorderSizePixel=0
-FSearchBox.TextXAlignment=Enum.TextXAlignment.Left; FSearchBox.ClearTextOnFocus=false
+FSearchBox.Font=Enum.Font.Code; FSearchBox.TextSize=11
+FSearchBox.PlaceholderText="search pets..."; FSearchBox.Text=""
+FSearchBox.TextXAlignment=Enum.TextXAlignment.Left
 
 local FRefreshBtn=Instance.new("TextButton",FSearchCard)
-FRefreshBtn.Text="↻"; FRefreshBtn.Size=UDim2.new(0,28,0,22); FRefreshBtn.Position=UDim2.new(1,-32,0.5,-11)
-FRefreshBtn.BackgroundColor3=Color3.fromRGB(80,60,0); FRefreshBtn.TextColor3=C.orange
-FRefreshBtn.Font=Enum.Font.GothamBold; FRefreshBtn.TextSize=13; FRefreshBtn.BorderSizePixel=0
+FRefreshBtn.Text="↻"; FRefreshBtn.Size=UDim2.new(0,30,0,26); FRefreshBtn.Position=UDim2.new(1,-34,0.5,-13)
+FRefreshBtn.BackgroundColor3=C.border; FRefreshBtn.TextColor3=C.text
+FRefreshBtn.Font=Enum.Font.GothamBold; FRefreshBtn.TextSize=16; FRefreshBtn.BorderSizePixel=0
 Instance.new("UICorner",FRefreshBtn).CornerRadius=UDim.new(0,6)
 
-local CampListCard=Instance.new("Frame",PFarm)
-CampListCard.Size=UDim2.new(1,-10,0,200); CampListCard.BackgroundColor3=C.card
-CampListCard.BorderSizePixel=0; CampListCard.LayoutOrder=8; CampListCard.ClipsDescendants=true
-Instance.new("UICorner",CampListCard).CornerRadius=UDim.new(0,10)
-Instance.new("UIStroke",CampListCard).Color=C.border
+-- pet scroll list
+local FListFrame=Instance.new("Frame",PFarm)
+FListFrame.Size=UDim2.new(1,-10,0,180); FListFrame.BackgroundColor3=C.card
+FListFrame.BorderSizePixel=0; FListFrame.LayoutOrder=8; FListFrame.ClipsDescendants=true
+Instance.new("UICorner",FListFrame).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",FListFrame).Color=C.border
 
-local CampHeader=Instance.new("Frame",CampListCard)
-CampHeader.Size=UDim2.new(1,0,0,24); CampHeader.BackgroundColor3=Color3.fromRGB(10,13,22); CampHeader.BorderSizePixel=0
-Instance.new("UICorner",CampHeader).CornerRadius=UDim.new(0,10)
-local CHFix=Instance.new("Frame",CampHeader); CHFix.Size=UDim2.new(1,0,0,10); CHFix.Position=UDim2.new(0,0,1,-10); CHFix.BackgroundColor3=Color3.fromRGB(10,13,22); CHFix.BorderSizePixel=0
+local FScroll=Instance.new("ScrollingFrame",FListFrame)
+FScroll.Size=UDim2.new(1,0,1,0); FScroll.BackgroundTransparency=1
+FScroll.BorderSizePixel=0; FScroll.ScrollBarThickness=3
+FScroll.ScrollBarImageColor3=C.accent; FScroll.CanvasSize=UDim2.new(0,0,0,0)
+local FLayout=Instance.new("UIListLayout",FScroll)
+FLayout.SortOrder=Enum.SortOrder.LayoutOrder; FLayout.Padding=UDim.new(0,2)
+Instance.new("UIPadding",FScroll).PaddingTop=UDim.new(0,4)
 
-local CHLbl=Instance.new("TextLabel",CampHeader)
-CHLbl.Text="TAP TO SELECT TARGETS  ·  multi-select"; CHLbl.Size=UDim2.new(1,-10,1,0); CHLbl.Position=UDim2.new(0,10,0,0)
-CHLbl.BackgroundTransparency=1; CHLbl.TextColor3=C.sub
-CHLbl.Font=Enum.Font.GothamBold; CHLbl.TextSize=9; CHLbl.TextXAlignment=Enum.TextXAlignment.Left
+local FSCount=Instance.new("TextLabel",PFarm)
+FSCount.Size=UDim2.new(1,-10,0,16); FSCount.BackgroundTransparency=1; FSCount.LayoutOrder=9
+FSCount.TextColor3=C.sub; FSCount.Font=Enum.Font.Code; FSCount.TextSize=9
+FSCount.TextXAlignment=Enum.TextXAlignment.Left; FSCount.Text="  0 selected"
 
-local CampScroll=Instance.new("ScrollingFrame",CampListCard)
-CampScroll.Size=UDim2.new(1,-6,1,-28); CampScroll.Position=UDim2.new(0,3,0,26)
-CampScroll.BackgroundTransparency=1; CampScroll.BorderSizePixel=0
-CampScroll.ScrollBarThickness=3; CampScroll.ScrollBarImageColor3=C.orange
-CampScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y; CampScroll.CanvasSize=UDim2.new(0,0,0,0)
-local CampLayout=Instance.new("UIListLayout",CampScroll)
-CampLayout.Padding=UDim.new(0,3); CampLayout.SortOrder=Enum.SortOrder.LayoutOrder
-
-local campBtns={}
-
-local function buildCampList(filter)
-    for _,c in pairs(CampScroll:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
-    campBtns={}
-
-    local campaign=workspace:FindFirstChild("Campaign")
-    if not campaign then CHLbl.Text="workspace.Campaign not found"; return end
-
-    local found={}
-    for _,model in pairs(campaign:GetChildren()) do
-        local n=model.Name
-        local lc=n:lower()
-        local pass=(filter=="" or lc:find(filter:lower(),1,true))
-        if pass then table.insert(found,n) end
+local function buildFarmPetList(filter)
+    for _,c in pairs(FScroll:GetChildren()) do
+        if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
     end
-    table.sort(found)
 
-    CHLbl.Text="CAMPAIGN TARGETS  ·  "..#found.." found"
+    local count = 0
+    for i, pname in ipairs(petNameList) do
+        if filter=="" or pname:lower():find(filter:lower(),1,true) then
+            count = count + 1
+            local camp = petToCampaign[pname] or "?"
 
-    for i,name in ipairs(found) do
-        local sel=farmTargets[name]==true
-        local btn=Instance.new("TextButton",CampScroll)
-        btn.Size=UDim2.new(1,-4,0,26); btn.LayoutOrder=i
-        btn.BackgroundColor3=sel and Color3.fromRGB(50,30,0) or Color3.fromRGB(10,15,22)
-        btn.BorderSizePixel=0; btn.Text=""; btn.Font=Enum.Font.GothamBold; btn.TextSize=0
-        Instance.new("UICorner",btn).CornerRadius=UDim.new(0,6)
-        Instance.new("UIStroke",btn).Color=sel and C.orange or C.border
+            local Row=Instance.new("TextButton",FScroll)
+            Row.Size=UDim2.new(1,-6,0,40); Row.BackgroundColor3=C.card
+            Row.BorderSizePixel=0; Row.Text=""; Row.LayoutOrder=i
+            Instance.new("UICorner",Row).CornerRadius=UDim.new(0,8)
+            local rStroke=Instance.new("UIStroke",Row)
+            rStroke.Color=farmTargets[pname] and C.orange or C.border; rStroke.Thickness=1
+            if farmTargets[pname] then Row.BackgroundColor3=Color3.fromRGB(35,20,0) end
 
-        local nLbl=Instance.new("TextLabel",btn)
-        nLbl.Name="nLbl"; nLbl.Text="  "..name; nLbl.Size=UDim2.new(1,-36,1,0); nLbl.Position=UDim2.new(0,0,0,0)
-        nLbl.BackgroundTransparency=1; nLbl.TextColor3=sel and C.orange or C.text
-        nLbl.Font=Enum.Font.GothamBold; nLbl.TextSize=10; nLbl.TextXAlignment=Enum.TextXAlignment.Left
+            local pLbl=Instance.new("TextLabel",Row)
+            pLbl.Text=pname; pLbl.Size=UDim2.new(1,-50,0,18); pLbl.Position=UDim2.new(0,10,0,4)
+            pLbl.BackgroundTransparency=1; pLbl.TextColor3=farmTargets[pname] and C.orange or C.text
+            pLbl.Font=Enum.Font.GothamBold; pLbl.TextSize=11
+            pLbl.TextXAlignment=Enum.TextXAlignment.Left
 
-        local chk=Instance.new("Frame",btn)
-        chk.Name="chk"; chk.Size=UDim2.new(0,14,0,14); chk.Position=UDim2.new(1,-18,0.5,-7)
-        chk.BackgroundColor3=sel and C.orange or C.border; chk.BorderSizePixel=0
-        Instance.new("UICorner",chk).CornerRadius=UDim.new(0,3)
-        local tick=Instance.new("TextLabel",chk)
-        tick.Text="✓"; tick.Size=UDim2.new(1,0,1,0); tick.BackgroundTransparency=1
-        tick.TextColor3=Color3.fromRGB(255,255,255); tick.Font=Enum.Font.GothamBold
-        tick.TextSize=9; tick.Visible=sel
+            local cLbl=Instance.new("TextLabel",Row)
+            cLbl.Text=camp; cLbl.Size=UDim2.new(1,-50,0,13); cLbl.Position=UDim2.new(0,10,0,23)
+            cLbl.BackgroundTransparency=1; cLbl.TextColor3=C.sub
+            cLbl.Font=Enum.Font.Code; cLbl.TextSize=8
+            cLbl.TextXAlignment=Enum.TextXAlignment.Left
 
-        campBtns[name]=btn
-        local bname=name
-        btn.MouseButton1Click:Connect(function()
-            if farmTargets[bname] then farmTargets[bname]=nil else farmTargets[bname]=true end
-            local nowSel=farmTargets[bname]==true
-            btn.BackgroundColor3=nowSel and Color3.fromRGB(50,30,0) or Color3.fromRGB(10,15,22)
-            Instance.new("UIStroke",btn).Color=nowSel and C.orange or C.border
-            nLbl.TextColor3=nowSel and C.orange or C.text
-            chk.BackgroundColor3=nowSel and C.orange or C.border
-            tick.Visible=nowSel
-            -- update status
-            local cnt=0; for _,_ in pairs(farmTargets) do cnt=cnt+1 end
-            FSStatus.Text=(states.farmActive and "ON" or "OFF").." · "..cnt.." target(s)"
-            saveSettings()
-        end)
+            local chk=Instance.new("TextLabel",Row)
+            chk.Text=farmTargets[pname] and "✓" or ""
+            chk.Size=UDim2.new(0,30,1,0); chk.Position=UDim2.new(1,-36,0,0)
+            chk.BackgroundTransparency=1; chk.TextColor3=C.orange
+            chk.Font=Enum.Font.GothamBold; chk.TextSize=16
+
+            Row.MouseButton1Click:Connect(function()
+                if farmTargets[pname] then
+                    farmTargets[pname]=nil
+                    chk.Text=""; pLbl.TextColor3=C.text
+                    rStroke.Color=C.border; Row.BackgroundColor3=C.card
+                else
+                    farmTargets[pname]=true
+                    chk.Text="✓"; pLbl.TextColor3=C.orange
+                    rStroke.Color=C.orange; Row.BackgroundColor3=Color3.fromRGB(35,20,0)
+                end
+                saveSettings()
+                local sel=0; for _ in pairs(farmTargets) do sel=sel+1 end
+                FSCount.Text="  "..sel.." selected"
+            end)
+        end
     end
+
+    FLayout:ApplyLayout()
+    FScroll.CanvasSize=UDim2.new(0,0,0,FLayout.AbsoluteContentSize.Y+8)
+    local sel=0; for _ in pairs(farmTargets) do sel=sel+1 end
+    FSCount.Text="  "..sel.." selected · "..count.." shown"
 end
 
-FSearchBox:GetPropertyChangedSignal("Text"):Connect(function() buildCampList(FSearchBox.Text) end)
-FRefreshBtn.MouseButton1Click:Connect(function() buildCampList(FSearchBox.Text) end)
-task.delay(1.5, function() buildCampList(""); refreshTeamList() end)
+buildFarmPetList("")
+FSearchBox:GetPropertyChangedSignal("Text"):Connect(function() buildFarmPetList(FSearchBox.Text) end)
+FRefreshBtn.MouseButton1Click:Connect(function()
+    refreshPetCampaignMap()
+    buildFarmPetList(FSearchBox.Text)
+end)
 
--- ── Auto Team Switch Helper ──────────────────────────────────
-local function applyPresetTeam(key)
-    local slots=presetTeams[key]
-    if not slots then return end
-    local hasAny=false
-    for _,v in pairs(slots) do if v~="" then hasAny=true break end end
-    if not hasAny then return end
-    pcall(function() SquadUpdate:FireServer(slots) end)
-    SLbl.Text="🔀 Auto-switched to "..key.." team"
-end
-
--- ── Farm Loop ─────────────────────────────────────────────────
-local farmIndex=1
-local farmTargetList={}  -- ordered list built each cycle
 
 task.spawn(function()
     while true do
@@ -1878,19 +1897,21 @@ task.spawn(function()
                     local target=farmTargetList[farmIndex]
                     farmIndex=farmIndex+1
 
-                    FSStatus.Text="⚔ Firing: "..target
+                    -- resolve pet name to campaign folder
+                    local campFolder = (petToCampaign and petToCampaign[target]) or target
+                    FSStatus.Text="⚔ "..target.." ("..campFolder..")"
                     SLbl.Text="Farm: "..target
 
                     -- auto switch to Farm team
                     applyPresetTeam("Farm")
                     task.wait(0.2)
 
-                    -- teleport to target model (if TP not disabled)
+                    -- teleport to campaign model (if TP not disabled)
                     if not states.farmNoTP then
                         local root=getRoot()
                         if root then
                             pcall(function()
-                                local model=workspace:WaitForChild("Campaign",3):WaitForChild(target,3)
+                                local model=workspace:WaitForChild("Campaign",3):WaitForChild(campFolder,3)
                                 local pos=model:GetModelCFrame().Position
                                 local dist=(root.Position-pos).Magnitude
                                 if dist>30 then
@@ -1903,8 +1924,8 @@ task.spawn(function()
 
                     -- fire RequestBattle
                     pcall(function()
-                        local model=workspace:WaitForChild("Campaign",3):WaitForChild(target,3)
-                        RequestBattle2:FireServer(model)
+                        local model=workspace:WaitForChild("Campaign",3):WaitForChild(campFolder,3)
+                        RequestBattle:FireServer(model)
                     end)
                     task.wait(1)
                 end
