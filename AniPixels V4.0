@@ -643,7 +643,7 @@ MakeToggleCard(PFeatures,"👁️","Player ESP","Name tags above all players",10
     function() for _,bb in pairs(espBillboards) do pcall(function() bb:Destroy() end) end espBillboards={} end)
 
 SectionLabel(PFeatures,"Battle",8)
-MakeToggleCard(PFeatures,"⚡","x4 Battle Speed","Sets FastForward to 0.25 for instant battles",8,"fastForward",
+local setFastForward = MakeToggleCard(PFeatures,"⚡","x4 Battle Speed","Sets FastForward to 0.25 for instant battles",8,"fastForward",
     function()
         pcall(function()
             game:GetService("ReplicatedStorage"):WaitForChild("State"):WaitForChild("FastForward").Value = 0.25
@@ -655,6 +655,7 @@ MakeToggleCard(PFeatures,"⚡","x4 Battle Speed","Sets FastForward to 0.25 for i
         end)
     end
 )
+task.defer(function() if states.fastForward and setFastForward then setFastForward(true) end end)
 
 SectionLabel(PFeatures,"Script",9)
 MakeToggleCard(PFeatures,"🔁","Auto Rejoin","Re-executes script on disconnect or server hop",9,"autoReExec")
@@ -1720,7 +1721,8 @@ local function updateDoorReqDisplay(doorName)
     DoorStatusLbl.Text = "  "..doorName..": "..table.concat(parts, " · ")
 end
 
-MakeToggleCard(PFarm,"🔓","Auto Door Unlock","Farms required pets for selected doors",4,"doorUnlock")
+local setDoorUnlock = MakeToggleCard(PFarm,"🔓","Auto Door Unlock","Farms required pets for selected doors",4,"doorUnlock")
+task.defer(function() if states.doorUnlock and setDoorUnlock then setDoorUnlock(true) end end)
 
 SectionLabel(PFarm,"Campaign Targets",6)
 
