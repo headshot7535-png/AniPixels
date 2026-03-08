@@ -676,6 +676,59 @@ end)
 -- ============================================================
 local RequestBattle=game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RequestBattle")
 
+-- ── Webhook Logging ───────────────────────────────────────────
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1480030997687963770/PSHw73-YcqBB6taiuLOm7-FQHrXDwDHC-3dV1uKE-BkMgF1BZL1zZUsOmcdHniuU0Nhd" -- paste your webhook here
+
+local function sendWebhook(eventType)
+    if WEBHOOK_URL == "YOUR_WEBHOOK_URL_HERE" then return end
+    pcall(function()
+        local HttpService = game:GetService("HttpService")
+        local plr = LP.Name
+        local uid = tostring(LP.UserId)
+        local placeId = tostring(game.PlaceId)
+        local jobId = game.JobId:sub(1,8).."..."
+        local isReexec = _G.AniPixelsRunning and true or false
+
+        -- build active toggles list
+        local active = {}
+        for k,v in pairs(states) do if v then active[#active+1]="``"..k.."``" end end
+        local toggleStr = #active>0 and table.concat(active,", ") or "none"
+
+        local color = isReexec and 16753920 or 3853567 -- orange for reexec, blue for fresh
+
+        local data = HttpService:JSONEncode({
+            username = "AniPixels",
+            avatar_url = "https://tr.rbxcdn.com/30DAY-AvatarHeadshot/"..uid.."/150/150/png/noFilter",
+            embeds = {{
+                author = {
+                    name = plr.." ("..uid..")",
+                    icon_url = "https://tr.rbxcdn.com/30DAY-AvatarHeadshot/"..uid.."/150/150/png/noFilter"
+                },
+                title = isReexec and "♻️  Script Re-Executed" or "🚀  Script Executed",
+                color = color,
+                fields = {
+                    { name = "👤  Player", value = "``"..plr.."``", inline = true },
+                    { name = "🆔  User ID", value = "``"..uid.."``", inline = true },
+                    { name = "🌐  Place ID", value = "``"..placeId.."``", inline = true },
+                    { name = "🖥️  Server", value = "``"..jobId.."``", inline = true },
+                    { name = "⚙️  Active Toggles", value = toggleStr, inline = false },
+                },
+                footer = { text = "AniPixels v4.0  •  github.com/headshot7535-png/AniPixels" },
+            }}
+        })
+
+        local req = (syn and syn.request) or (http and http.request) or request
+        if req then
+            req({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = data
+            })
+        end
+    end)
+end
+
 SectionLabel(PBosses,"Auto Fight",1)
 
 local function isBossPresent(p) local c=workspace:FindFirstChild("Campaign") return c and c:FindFirstChild(p)~=nil end
@@ -2083,3 +2136,8 @@ updateChainPreview(mergeTargetBase)
 
 local msg=next(LS) and "✓ Settings restored" or "Ready · v4.0"
 SLbl.Text=msg; print("[AniPixels v4.0] Loaded. "..msg)
+
+-- log execution to webhook
+task.spawn(function()
+    sendWebhook("execute")
+end)
