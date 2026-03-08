@@ -640,7 +640,7 @@ MakeToggleCard(PFeatures,"👁️","Player ESP","Name tags above all players",10
 SectionLabel(PFeatures,"Script",9)
 MakeToggleCard(PFeatures,"🔁","Auto Rejoin","Re-executes script on disconnect or server hop",9,"autoReExec")
 SectionLabel(PFeatures,"Server",10)
-MakeToggleCard(PFeatures,"🌐","Server Hop","Auto hops to next server every 30s",10,"serverHop")
+local setServerHop=MakeToggleCard(PFeatures,"🌐","Server Hop","Auto hops to next server every 30s",10,"serverHop")
 
 SectionLabel(PFeatures,"Actions",11)
 MakeActionBtn(PFeatures,"📋","Print Position","Prints XYZ to output",12,C.accent,function(_,lbl)
@@ -1983,8 +1983,9 @@ task.spawn(function()
     -- restore serverHop from _G if carried over from previous server
     if _G.AniPixels_ServerHop then
         _G.AniPixels_ServerHop = nil
-        states.serverHop = true
-        saveSettings()
+        task.defer(function()
+            if setServerHop then setServerHop(true) end
+        end)
     end
 
     while true do
