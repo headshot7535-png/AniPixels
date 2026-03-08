@@ -23,6 +23,8 @@ local function getRoot()  local c=getChar() return c and c:FindFirstChild("Human
 -- ── Re-execute guard (prevent double load) ───────────────────
 if _G.AniPixelsRunning then
     pcall(function()
+        -- signal all old loops to stop
+        if _G.AniPixels_Kill then _G.AniPixels_Kill.dead = true end
         if LP and LP.PlayerGui then
             local old = LP.PlayerGui:FindFirstChild("AniPixelsGUI")
             if old then old:Destroy() end
@@ -30,6 +32,9 @@ if _G.AniPixelsRunning then
     end)
 else
     _G.AniPixelsRunning = true
+-- kill token: old loops check this and stop if dead=true
+local _kill = {dead=false}
+_G.AniPixels_Kill = _kill
 end
 
 -- ============================================================
@@ -1991,6 +1996,7 @@ end)
 
 task.spawn(function()
     while true do
+        if _kill.dead then break end
         if not FSBattle or not FSBattle.Parent then break end
         if states.farmActive then
             -- update battle indicator
@@ -2061,6 +2067,7 @@ end)
 -- update farm status dot periodically
 task.spawn(function()
     while true do task.wait(1)
+        if _kill.dead then break end
         if not FSBattle or not FSBattle.Parent then break end
         local inBattle=isInBattle()
         if states.farmActive then
@@ -2176,6 +2183,7 @@ end)
 local function bossLoop(key,path)
     task.spawn(function()
         while true do
+            if _kill.dead then break end
             if states[key] then
                 -- skip if already in a battle
                 if isInBattle() then
@@ -2217,6 +2225,7 @@ bossLoop("autoMadara","Madara Ten Tails")
 -- ── Door Unlock loop ─────────────────────────────────────────
 task.spawn(function()
     while true do
+        if _kill.dead then break end
         if states.doorUnlock then
             -- collect all missing pets across all selected doors
             local allMissing = {}
@@ -2302,6 +2311,7 @@ end
 
 task.spawn(function()
     while true do
+        if _kill.dead then break end
         if states.dragonBall then
             local root = getRoot()
             if not root then task.wait(1); continue end
@@ -2520,6 +2530,7 @@ task.spawn(function()
     end
 
     while true do
+        if _kill.dead then break end
         if states.serverHop and not isHopping then
             -- wait for server to load dragon balls
             task.wait(10)
@@ -2559,6 +2570,7 @@ end)
 task.spawn(function()
     local FF = game:GetService("ReplicatedStorage"):WaitForChild("State",5):WaitForChild("FastForward",5)
     while true do
+        if _kill.dead then break end
         task.wait(0.5)
         if states.fastForward then
             if FF and FF.Value ~= 0.25 then FF.Value = 0.25 end
