@@ -1870,25 +1870,30 @@ local function syncRejoinFlag()
 end
 syncRejoinFlag()
 
--- Fire when the SERVER kicks/teleports you out
-game:GetService("Players").LocalPlayer.OnTeleport:Connect(function(teleportState)
-    if teleportState == Enum.TeleportState.RequestedByServer then
-        syncRejoinFlag()
-    end
+-- Fire when the SERVER kicks/teleports you out (save _G flag)
+pcall(function()
+    game:GetService("Players").LocalPlayer.OnTeleport:Connect(function(teleportState)
+        if teleportState == Enum.TeleportState.RequestedByServer then
+            syncRejoinFlag()
+            -- arm re-execute right as server is kicking us
+            if queue_on_teleport and states.autoReExec then
+                pcall(function()
+                    queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'",true))()')
+                end)
+            end
+        end
+    end)
 end)
 
--- queue_on_teleport: runs in the new server after teleport, supported by most executors
--- this avoids the [CrossExperience] loadstring block
-if states.autoReExec then
+-- queue_on_teleport: queues script to run in next server, avoids CrossExperience block
+local function armQueueOnTeleport()
     pcall(function()
-        if queue_on_teleport then
-            queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'", true))()')
+        if queue_on_teleport and states.autoReExec then
+            queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'",true))()')
         end
     end)
 end
-
--- Re-queue every time toggle is turned on so it stays armed
--- (handled by syncRejoinFlag loop below)
+armQueueOnTeleport()
 
 -- Keep _G flag live and keep queue_on_teleport armed while toggle is on
 task.spawn(function()
@@ -1899,9 +1904,7 @@ task.spawn(function()
         -- re-arm queue_on_teleport whenever toggle flips on
         if states.autoReExec and not wasOn then
             pcall(function()
-                if queue_on_teleport then
-                    queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'", true))()')
-                end
+                armQueueOnTeleport()
             end)
         end
         wasOn = states.autoReExec
@@ -1935,6 +1938,12 @@ task.spawn(function()
                         break
                     end
                 end
+            end
+        end)
+        -- arm re-execute BEFORE teleporting so it runs in the new server
+        pcall(function()
+            if queue_on_teleport and states.autoReExec then
+                queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'",true))()')
             end
         end)
         if nextServerId then
