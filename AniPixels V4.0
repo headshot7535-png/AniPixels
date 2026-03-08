@@ -7,14 +7,17 @@ local RunService       = game:GetService("RunService")
 local TweenService     = game:GetService("TweenService")
 local VirtualUser      = game:GetService("VirtualUser")
 local Lighting         = game:GetService("Lighting")
-local LP = Players.LocalPlayer or Players:GetPropertyChangedSignal("LocalPlayer"):Wait() and Players.LocalPlayer
--- wait for PlayerGui to exist (important on re-execute after teleport)
-local timeout = 0
-while not LP or not LP:FindFirstChildOfClass("PlayerGui") do
-    task.wait(0.1)
-    timeout = timeout + 0.1
+-- wait for game to fully load (critical for queue_on_teleport re-execute)
+if not game:IsLoaded() then game.Loaded:Wait() end
+task.wait(1)
+
+local LP = Players.LocalPlayer
+while not LP do
+    Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
     LP = Players.LocalPlayer
-    if timeout > 10 then break end
+end
+while not LP:FindFirstChildOfClass("PlayerGui") do
+    task.wait(0.1)
 end
 local function getChar()  return LP.Character end
 local function getHuman() local c=getChar() return c and c:FindFirstChildOfClass("Humanoid") end
