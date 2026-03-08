@@ -1788,80 +1788,109 @@ bossLoop("autoMadara","Madara Ten Tails")
 
 -- ── Dragon Ball loop ─────────────────────────────────────────
 local VIM_DB = game:GetService("VirtualInputManager")
+
+local function countBackpackBalls()
+    local count = 0
+    pcall(function()
+        local backpack = LP.PlayerGui:FindFirstChild("ScreenGui")
+            and LP.PlayerGui.ScreenGui:FindFirstChild("DragonBallBackpack")
+        if backpack then
+            for i = 1, 7 do
+                local slot = backpack:FindFirstChild(tostring(i))
+                if slot and slot.Visible then count = count + 1 end
+            end
+        end
+    end)
+    return count
+end
+
 task.spawn(function()
     while true do
         if states.dragonBall then
             local root = getRoot()
             if not root then task.wait(1); continue end
 
-            -- scan workspace for DragonBall1-7
-            local ws = game:GetService("Workspace")
-            local found = {}
-            for i = 1, 7 do
-                local ball = ws:FindFirstChild("DragonBall"..i)
-                if ball then table.insert(found, {idx=i, model=ball}) end
-            end
+            -- check how many balls player already has
+            local owned = countBackpackBalls()
 
-            -- update dot indicators
-            for i = 1, 7 do
-                if dbDots[i] then
-                    local gotIt = false
-                    for _,f in ipairs(found) do if f.idx==i then gotIt=true break end end
-                    dbDots[i].BackgroundColor3 = gotIt
-                        and Color3.fromRGB(220,160,0)
-                        or  Color3.fromRGB(30,25,5)
-                    local numLbl = dbDots[i]:FindFirstChildOfClass("TextLabel")
-                    if numLbl then
-                        numLbl.TextColor3 = gotIt and Color3.fromRGB(255,255,255) or Color3.fromRGB(100,80,20)
+            if owned >= 7 then
+                -- already have all 7, stop collecting
+                DBStatus.Text = "✨ You have all 7! Make a wish!"
+                DBFound.Text = "Owned: 7/7"
+                SLbl.Text = "All 7 Dragon Balls owned!"
+                -- update all dots gold
+                for i = 1, 7 do
+                    if dbDots[i] then
+                        dbDots[i].BackgroundColor3 = Color3.fromRGB(255,210,50)
+                        local n = dbDots[i]:FindFirstChildOfClass("TextLabel")
+                        if n then n.TextColor3 = Color3.fromRGB(0,0,0) end
                     end
                 end
-            end
-
-            DBFound.Text = "Found: "..#found.."/7"
-
-            if #found == 0 then
-                DBStatus.Text = "⏳ Waiting for Dragon Balls to spawn..."
-                SLbl.Text = "Dragon Balls: none spawned"
                 task.wait(3)
             else
-                -- collect each found ball one by one
-                for _, entry in ipairs(found) do
-                    if not states.dragonBall then break end
-                    local ball = entry.model
+                -- scan workspace for uncollected DragonBall1-7
+                local ws = game:GetService("Workspace")
+                local found = {}
+                for i = 1, 7 do
+                    local ball = ws:FindFirstChild("DragonBall"..i)
+                    if ball then table.insert(found, {idx=i, model=ball}) end
+                end
 
-                    -- get model position
-                    local pos
-                    pcall(function()
-                        pos = ball:IsA("Model") and ball:GetModelCFrame().Position
-                            or ball:IsA("BasePart") and ball.Position
-                            or ball:FindFirstChildOfClass("BasePart") and ball:FindFirstChildOfClass("BasePart").Position
-                    end)
-
-                    if pos then
-                        DBStatus.Text = "🟡 Going to Ball "..entry.idx.."..."
-                        SLbl.Text = "Dragon Ball "..entry.idx.." → TP"
-                        DBLog.Text = "  Ball "..entry.idx.." at "..
-                            string.format("%.0f, %.0f, %.0f", pos.X, pos.Y, pos.Z)
-
-                        -- teleport to ball
-                        root.CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
-                        task.wait(0.5)
-
-                        -- press E to collect
-                        VIM_DB:SendKeyEvent(true,  Enum.KeyCode.E, false, game)
-                        task.wait(0.15)
-                        VIM_DB:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-                        task.wait(0.8)
-
-                        DBStatus.Text = "✓ Collected Ball "..entry.idx
+                -- update dot indicators
+                for i = 1, 7 do
+                    if dbDots[i] then
+                        local inWorld = false
+                        for _,f in ipairs(found) do if f.idx==i then inWorld=true break end end
+                        dbDots[i].BackgroundColor3 = inWorld
+                            and Color3.fromRGB(220,160,0)
+                            or  Color3.fromRGB(30,25,5)
+                        local numLbl = dbDots[i]:FindFirstChildOfClass("TextLabel")
+                        if numLbl then
+                            numLbl.TextColor3 = inWorld and Color3.fromRGB(255,255,255) or Color3.fromRGB(100,80,20)
+                        end
                     end
                 end
 
-                if #found == 7 then
-                    DBStatus.Text = "✨ All 7 collected! Make a wish!"
-                    SLbl.Text = "All Dragon Balls collected!"
-                    task.wait(5)
+                DBFound.Text = "Owned: "..owned.."/7 · World: "..#found
+
+                if #found == 0 then
+                    DBStatus.Text = "⏳ Waiting for Dragon Balls to spawn..."
+                    SLbl.Text = "Dragon Balls: none spawned"
+                    task.wait(3)
                 else
+                    -- collect each found ball one by one
+                    for _, entry in ipairs(found) do
+                        if not states.dragonBall then break end
+
+                        -- re-check owned count before each ball
+                        owned = countBackpackBalls()
+                        if owned >= 7 then break end
+
+                        local ball = entry.model
+                        local pos
+                        pcall(function()
+                            pos = ball:IsA("Model") and ball:GetModelCFrame().Position
+                                or ball:IsA("BasePart") and ball.Position
+                                or ball:FindFirstChildOfClass("BasePart") and ball:FindFirstChildOfClass("BasePart").Position
+                        end)
+
+                        if pos then
+                            DBStatus.Text = "🟡 Going to Ball "..entry.idx.." (have "..owned..")"
+                            SLbl.Text = "Dragon Ball "..entry.idx.." → TP"
+                            DBLog.Text = "  Ball "..entry.idx.." at "..
+                                string.format("%.0f, %.0f, %.0f", pos.X, pos.Y, pos.Z)
+
+                            root.CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
+                            task.wait(0.5)
+
+                            VIM_DB:SendKeyEvent(true,  Enum.KeyCode.E, false, game)
+                            task.wait(0.15)
+                            VIM_DB:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                            task.wait(0.8)
+
+                            DBStatus.Text = "✓ Collected Ball "..entry.idx
+                        end
+                    end
                     task.wait(2)
                 end
             end
