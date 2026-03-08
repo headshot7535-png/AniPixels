@@ -1926,6 +1926,7 @@ task.spawn(function()
     local HttpService     = game:GetService("HttpService")
     local placeId         = game.PlaceId
     local currentJobId    = game.JobId
+    local isHopping       = false  -- prevent double hops
 
     local function countDragonBalls()
         local ws = game:GetService("Workspace")
@@ -1937,6 +1938,12 @@ task.spawn(function()
     end
 
     local function hopToNext()
+        if isHopping then return end
+        isHopping = true
+        states.serverHop = false  -- turn off BEFORE teleporting to stop loop
+        saveSettings()
+
+        SLbl.Text = "🌐 Finding next server..."
         local nextServerId = nil
         pcall(function()
             local url = "https://games.roblox.com/v1/games/"..placeId.."/servers/Public?sortOrder=Asc&limit=100"
@@ -1950,60 +1957,74 @@ task.spawn(function()
                 end
             end
         end)
-        -- arm re-execute BEFORE teleporting so it runs in the new server
+
+        -- arm re-execute in new server BEFORE teleporting
         pcall(function()
             if queue_on_teleport and states.autoReExec then
                 queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'",true))()')
             end
         end)
+
+        -- store hop state in _G so new server restores it
+        _G.AniPixels_ServerHop = true
+
+        task.wait(0.3)
         if nextServerId then
+            SLbl.Text = "🌐 Hopping..."
             pcall(function() TeleportService:TeleportToPlaceInstance(placeId, nextServerId) end)
         else
+            SLbl.Text = "🌐 No server found, rejoining..."
             pcall(function() TeleportService:Teleport(placeId) end)
         end
+
+        -- if teleport fails somehow, re-enable after 15s
+        task.wait(15)
+        isHopping = false
+    end
+
+    -- restore serverHop from _G if carried over from previous server
+    if _G.AniPixels_ServerHop then
+        _G.AniPixels_ServerHop = nil
+        states.serverHop = true
+        saveSettings()
     end
 
     while true do
-        if states.serverHop then
-            -- wait a few seconds for server to load dragon balls
-            task.wait(5)
+        if states.serverHop and not isHopping then
+            -- wait for server to load dragon balls
+            task.wait(6)
 
             local ballCount = countDragonBalls()
             SLbl.Text = "🌐 Server check: "..ballCount.."/7 Dragon Balls"
 
             if ballCount > 0 then
-                -- balls found! turn off server hop and let dragon ball loop handle it
-                SLbl.Text = "🟡 "..ballCount.." Dragon Ball(s) found! Stopping hop"
-                -- optionally auto-enable dragon ball collector
+                -- balls here! pause hopping, auto-enable collector
+                SLbl.Text = "🟡 "..ballCount.." ball(s) found! Collecting..."
                 if not states.dragonBall then
                     states.dragonBall = true
                     setDragon(true)
                 end
-                -- keep waiting until balls are gone before hopping again
+                -- wait until all balls collected/despawned
                 repeat
                     task.wait(3)
                     ballCount = countDragonBalls()
                 until ballCount == 0 or not states.serverHop
 
                 if states.serverHop then
-                    SLbl.Text = "🌐 Balls gone, hopping server..."
-                    task.wait(1)
+                    task.wait(2)
                     hopToNext()
-                    task.wait(10)
                 end
             else
-                -- no balls here, hop immediately
-                SLbl.Text = "🌐 No Dragon Balls, hopping..."
+                -- no balls, hop to next
+                SLbl.Text = "🌐 No balls here, hopping..."
                 task.wait(0.5)
                 hopToNext()
-                task.wait(10)
             end
         else
             task.wait(0.5)
         end
     end
 end)
-
 -- ── Auto save ─────────────────────────────────────────────────
 task.spawn(function() while true do task.wait(5); saveSettings() end end)
 
