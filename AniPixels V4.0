@@ -12,8 +12,15 @@ local function getChar()  return LP.Character end
 local function getHuman() local c=getChar() return c and c:FindFirstChildOfClass("Humanoid") end
 local function getRoot()  local c=getChar() return c and c:FindFirstChild("HumanoidRootPart") end
 
--- destroy old
-if LP.PlayerGui:FindFirstChild("AniPixelsGUI") then LP.PlayerGui.AniPixelsGUI:Destroy() end
+-- ── Re-execute guard (prevent double load) ───────────────────
+if _G.AniPixelsRunning then
+    -- already running, this is a re-exec: destroy old gui and continue
+    if LP.PlayerGui:FindFirstChild("AniPixelsGUI") then
+        LP.PlayerGui.AniPixelsGUI:Destroy()
+    end
+else
+    _G.AniPixelsRunning = true
+end
 
 -- ============================================================
 --  STATE
@@ -25,6 +32,9 @@ local states = {
     autoAllForOne=false, autoDioHeaven=false, autoMadara=false,
     mergeActive=false,
     farmNoTP=false, farmActive=false,
+    serverHop=false,
+    dragonBall=false,
+    autoReExec=false,
 }
 local walkSpeed   = 16
 local flyBV, flyBG
@@ -316,7 +326,7 @@ end
 
 local function makeTabBtn(icon, name)
     local btn=Instance.new("TextButton",TabBar)
-    btn.Text=icon.." "..name; btn.Size=UDim2.new(0,76,0,26)
+    btn.Text=icon.." "..name; btn.Size=UDim2.new(0,62,0,26)
     btn.BackgroundTransparency=1; btn.TextColor3=C.sub
     btn.Font=Enum.Font.GothamBold; btn.TextSize=10; btn.BorderSizePixel=0
     Instance.new("UICorner",btn).CornerRadius=UDim.new(0,7)
@@ -338,6 +348,94 @@ local PFeatures = makeTabBtn("⚙️","Features")
 local PBosses   = makeTabBtn("⚔️","Bosses")
 local PMerge    = makeTabBtn("🔀","Merge")
 local PFarm     = makeTabBtn("🌾","Farm")
+local PDragon   = makeTabBtn("🐉","Dragon")
+
+-- ============================================================
+--  DRAGON BALL TAB
+-- ============================================================
+-- Status card
+local DBStatusCard=Instance.new("Frame",PDragon)
+DBStatusCard.Size=UDim2.new(1,-10,0,72); DBStatusCard.BackgroundColor3=C.card
+DBStatusCard.BorderSizePixel=0; DBStatusCard.LayoutOrder=1
+Instance.new("UICorner",DBStatusCard).CornerRadius=UDim.new(0,10)
+local dbsc=Instance.new("UIStroke",DBStatusCard); dbsc.Color=C.border; dbsc.Thickness=1
+
+local DBTitle=Instance.new("TextLabel",DBStatusCard)
+DBTitle.Text="Dragon Ball Collector"; DBTitle.Size=UDim2.new(1,-100,0,18); DBTitle.Position=UDim2.new(0,14,0,8)
+DBTitle.BackgroundTransparency=1; DBTitle.TextColor3=C.text
+DBTitle.Font=Enum.Font.GothamBold; DBTitle.TextSize=13; DBTitle.TextXAlignment=Enum.TextXAlignment.Left
+
+local DBStatus=Instance.new("TextLabel",DBStatusCard)
+DBStatus.Text="OFF · Waiting for balls to spawn"; DBStatus.Size=UDim2.new(1,-100,0,13); DBStatus.Position=UDim2.new(0,14,0,28)
+DBStatus.BackgroundTransparency=1; DBStatus.TextColor3=C.sub
+DBStatus.Font=Enum.Font.Code; DBStatus.TextSize=9; DBStatus.TextXAlignment=Enum.TextXAlignment.Left
+
+local DBFound=Instance.new("TextLabel",DBStatusCard)
+DBFound.Text="Found: 0/7"; DBFound.Size=UDim2.new(1,-100,0,12); DBFound.Position=UDim2.new(0,14,0,44)
+DBFound.BackgroundTransparency=1; DBFound.TextColor3=Color3.fromRGB(255,210,50)
+DBFound.Font=Enum.Font.Code; DBFound.TextSize=9; DBFound.TextXAlignment=Enum.TextXAlignment.Left
+
+-- toggle pill
+local DBPill=Instance.new("Frame",DBStatusCard)
+DBPill.Size=UDim2.new(0,44,0,24); DBPill.Position=UDim2.new(1,-50,0.5,-12)
+DBPill.BackgroundColor3=C.border; DBPill.BorderSizePixel=0
+Instance.new("UICorner",DBPill).CornerRadius=UDim.new(1,0)
+local DBThumb=Instance.new("Frame",DBPill)
+DBThumb.Size=UDim2.new(0,18,0,18); DBThumb.Position=UDim2.new(0,3,0.5,-9)
+DBThumb.BackgroundColor3=C.sub; DBThumb.BorderSizePixel=0
+Instance.new("UICorner",DBThumb).CornerRadius=UDim.new(1,0)
+
+local dbti=TweenInfo.new(0.18,Enum.EasingStyle.Quad)
+local function setDragon(on)
+    states.dragonBall=on; saveSettings()
+    if on then
+        TweenService:Create(DBPill,dbti,{BackgroundColor3=Color3.fromRGB(160,120,0)}):Play()
+        TweenService:Create(DBThumb,dbti,{Position=UDim2.new(0,23,0.5,-9),BackgroundColor3=C.gold}):Play()
+        dbsc.Color=Color3.fromRGB(160,120,0); DBTitle.TextColor3=C.gold
+        DBStatus.Text="ON · Scanning for Dragon Balls..."
+    else
+        TweenService:Create(DBPill,dbti,{BackgroundColor3=C.border}):Play()
+        TweenService:Create(DBThumb,dbti,{Position=UDim2.new(0,3,0.5,-9),BackgroundColor3=C.sub}):Play()
+        dbsc.Color=C.border; DBTitle.TextColor3=C.text
+        DBStatus.Text="OFF · Waiting for balls to spawn"
+    end
+end
+-- restore pill state on load using setDragon so everything syncs
+task.defer(function() if states.dragonBall then setDragon(true) end end)
+local DBPillBtn=Instance.new("TextButton",DBPill)
+DBPillBtn.Size=UDim2.new(1,0,1,0); DBPillBtn.BackgroundTransparency=1; DBPillBtn.Text=""; DBPillBtn.ZIndex=3
+DBPillBtn.MouseButton1Click:Connect(function() setDragon(not states.dragonBall) end)
+
+-- ball status grid (7 indicators)
+local DBGrid=Instance.new("Frame",PDragon)
+DBGrid.Size=UDim2.new(1,-10,0,38); DBGrid.BackgroundColor3=C.card
+DBGrid.BorderSizePixel=0; DBGrid.LayoutOrder=2
+Instance.new("UICorner",DBGrid).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",DBGrid).Color=C.border
+local dbGridLayout=Instance.new("UIListLayout",DBGrid)
+dbGridLayout.FillDirection=Enum.FillDirection.Horizontal
+dbGridLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
+dbGridLayout.VerticalAlignment=Enum.VerticalAlignment.Center
+dbGridLayout.Padding=UDim.new(0,6)
+
+local dbDots={}
+for i=1,7 do
+    local dot=Instance.new("Frame",DBGrid)
+    dot.Size=UDim2.new(0,28,0,28); dot.BackgroundColor3=Color3.fromRGB(30,25,5)
+    dot.BorderSizePixel=0
+    Instance.new("UICorner",dot).CornerRadius=UDim.new(1,0)
+    local num=Instance.new("TextLabel",dot)
+    num.Text=tostring(i); num.Size=UDim2.new(1,0,1,0)
+    num.BackgroundTransparency=1; num.TextColor3=Color3.fromRGB(100,80,20)
+    num.Font=Enum.Font.GothamBold; num.TextSize=11
+    dbDots[i]=dot
+end
+
+-- log label
+local DBLog=Instance.new("TextLabel",PDragon)
+DBLog.Size=UDim2.new(1,-10,0,20); DBLog.BackgroundTransparency=1; DBLog.LayoutOrder=3
+DBLog.TextColor3=C.sub; DBLog.Font=Enum.Font.Code; DBLog.TextSize=9
+DBLog.TextXAlignment=Enum.TextXAlignment.Left; DBLog.Text="  Waiting..."
 
 -- ============================================================
 --  REUSABLE COMPONENTS
@@ -528,6 +626,11 @@ MakeToggleCard(PFeatures,"⏱️","Anti AFK","Prevents auto-kick every 55s",8,"a
 MakeToggleCard(PFeatures,"💡","Full Bright","Max lighting · removes fog",9,"fullBright")
 MakeToggleCard(PFeatures,"👁️","Player ESP","Name tags above all players",10,"esp",nil,
     function() for _,bb in pairs(espBillboards) do pcall(function() bb:Destroy() end) end espBillboards={} end)
+
+SectionLabel(PFeatures,"Script",9)
+MakeToggleCard(PFeatures,"🔁","Auto Rejoin","Re-executes script on disconnect or server hop",9,"autoReExec")
+SectionLabel(PFeatures,"Server",10)
+MakeToggleCard(PFeatures,"🌐","Server Hop","Auto hops to next server every 30s",10,"serverHop")
 
 SectionLabel(PFeatures,"Actions",11)
 MakeActionBtn(PFeatures,"📋","Print Position","Prints XYZ to output",12,C.accent,function(_,lbl)
@@ -1666,6 +1769,208 @@ bossLoop("autoSukuna","Heian Era Sukuna")
 bossLoop("autoAllForOne","All For One")
 bossLoop("autoDioHeaven","Dio Over Heaven")
 bossLoop("autoMadara","Madara Ten Tails")
+
+-- ── Dragon Ball loop ─────────────────────────────────────────
+local VIM_DB = game:GetService("VirtualInputManager")
+task.spawn(function()
+    while true do
+        if states.dragonBall then
+            local root = getRoot()
+            if not root then task.wait(1); continue end
+
+            -- scan workspace for DragonBall1-7
+            local ws = game:GetService("Workspace")
+            local found = {}
+            for i = 1, 7 do
+                local ball = ws:FindFirstChild("DragonBall"..i)
+                if ball then table.insert(found, {idx=i, model=ball}) end
+            end
+
+            -- update dot indicators
+            for i = 1, 7 do
+                if dbDots[i] then
+                    local gotIt = false
+                    for _,f in ipairs(found) do if f.idx==i then gotIt=true break end end
+                    dbDots[i].BackgroundColor3 = gotIt
+                        and Color3.fromRGB(220,160,0)
+                        or  Color3.fromRGB(30,25,5)
+                    local numLbl = dbDots[i]:FindFirstChildOfClass("TextLabel")
+                    if numLbl then
+                        numLbl.TextColor3 = gotIt and Color3.fromRGB(255,255,255) or Color3.fromRGB(100,80,20)
+                    end
+                end
+            end
+
+            DBFound.Text = "Found: "..#found.."/7"
+
+            if #found == 0 then
+                DBStatus.Text = "⏳ Waiting for Dragon Balls to spawn..."
+                SLbl.Text = "Dragon Balls: none spawned"
+                task.wait(3)
+            else
+                -- collect each found ball one by one
+                for _, entry in ipairs(found) do
+                    if not states.dragonBall then break end
+                    local ball = entry.model
+
+                    -- get model position
+                    local pos
+                    pcall(function()
+                        pos = ball:IsA("Model") and ball:GetModelCFrame().Position
+                            or ball:IsA("BasePart") and ball.Position
+                            or ball:FindFirstChildOfClass("BasePart") and ball:FindFirstChildOfClass("BasePart").Position
+                    end)
+
+                    if pos then
+                        DBStatus.Text = "🟡 Going to Ball "..entry.idx.."..."
+                        SLbl.Text = "Dragon Ball "..entry.idx.." → TP"
+                        DBLog.Text = "  Ball "..entry.idx.." at "..
+                            string.format("%.0f, %.0f, %.0f", pos.X, pos.Y, pos.Z)
+
+                        -- teleport to ball
+                        root.CFrame = CFrame.new(pos + Vector3.new(0, 4, 0))
+                        task.wait(0.5)
+
+                        -- press E to collect
+                        VIM_DB:SendKeyEvent(true,  Enum.KeyCode.E, false, game)
+                        task.wait(0.15)
+                        VIM_DB:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+                        task.wait(0.8)
+
+                        DBStatus.Text = "✓ Collected Ball "..entry.idx
+                    end
+                end
+
+                if #found == 7 then
+                    DBStatus.Text = "✨ All 7 collected! Make a wish!"
+                    SLbl.Text = "All Dragon Balls collected!"
+                    task.wait(5)
+                else
+                    task.wait(2)
+                end
+            end
+        else
+            task.wait(0.3)
+        end
+    end
+end)
+
+-- ── Auto Re-Execute on disconnect / new server ──────────────
+local REEXEC_URL = "https://raw.githubusercontent.com/headshot7535-png/AniPixels/main/AniPixels%20V4.0"
+
+-- Carry toggle state across servers via _G
+if _G.AniPixels_AutoRejoin and not states.autoReExec then
+    states.autoReExec = true
+    saveSettings()
+end
+
+-- Keep _G in sync with toggle
+local function syncRejoinFlag()
+    _G.AniPixels_AutoRejoin = states.autoReExec
+end
+syncRejoinFlag()
+
+-- Fire when YOU teleport to a new server (server hop, etc.)
+game:GetService("TeleportService").LocalPlayerArrivedFromTeleport:Connect(function()
+    if states.autoReExec then
+        task.wait(3) -- let game finish loading
+        pcall(function()
+            loadstring(game:HttpGet(REEXEC_URL, true))()
+        end)
+    end
+end)
+
+-- Fire when the SERVER kicks/teleports you out
+game:GetService("Players").LocalPlayer.OnTeleport:Connect(function(teleportState)
+    if teleportState == Enum.TeleportState.RequestedByServer then
+        syncRejoinFlag() -- make sure _G is set before we leave
+    end
+end)
+
+-- Keep _G flag live while toggle is on
+task.spawn(function()
+    while true do
+        task.wait(2)
+        syncRejoinFlag()
+    end
+end)
+-- ── Server Hop loop (Dragon Ball aware) ─────────────────────
+task.spawn(function()
+    local TeleportService = game:GetService("TeleportService")
+    local HttpService     = game:GetService("HttpService")
+    local placeId         = game.PlaceId
+    local currentJobId    = game.JobId
+
+    local function countDragonBalls()
+        local ws = game:GetService("Workspace")
+        local count = 0
+        for i = 1, 7 do
+            if ws:FindFirstChild("DragonBall"..i) then count = count + 1 end
+        end
+        return count
+    end
+
+    local function hopToNext()
+        local nextServerId = nil
+        pcall(function()
+            local url = "https://games.roblox.com/v1/games/"..placeId.."/servers/Public?sortOrder=Asc&limit=100"
+            local res = HttpService:JSONDecode(game:HttpGet(url))
+            if res and res.data then
+                for _, srv in ipairs(res.data) do
+                    if srv.id ~= currentJobId and srv.playing < srv.maxPlayers then
+                        nextServerId = srv.id
+                        break
+                    end
+                end
+            end
+        end)
+        if nextServerId then
+            pcall(function() TeleportService:TeleportToPlaceInstance(placeId, nextServerId) end)
+        else
+            pcall(function() TeleportService:Teleport(placeId) end)
+        end
+    end
+
+    while true do
+        if states.serverHop then
+            -- wait a few seconds for server to load dragon balls
+            task.wait(5)
+
+            local ballCount = countDragonBalls()
+            SLbl.Text = "🌐 Server check: "..ballCount.."/7 Dragon Balls"
+
+            if ballCount > 0 then
+                -- balls found! turn off server hop and let dragon ball loop handle it
+                SLbl.Text = "🟡 "..ballCount.." Dragon Ball(s) found! Stopping hop"
+                -- optionally auto-enable dragon ball collector
+                if not states.dragonBall then
+                    states.dragonBall = true
+                    setDragon(true)
+                end
+                -- keep waiting until balls are gone before hopping again
+                repeat
+                    task.wait(3)
+                    ballCount = countDragonBalls()
+                until ballCount == 0 or not states.serverHop
+
+                if states.serverHop then
+                    SLbl.Text = "🌐 Balls gone, hopping server..."
+                    task.wait(1)
+                    hopToNext()
+                    task.wait(10)
+                end
+            else
+                -- no balls here, hop immediately
+                SLbl.Text = "🌐 No Dragon Balls, hopping..."
+                task.wait(0.5)
+                hopToNext()
+                task.wait(10)
+            end
+        else
+            task.wait(0.5)
+        end
+    end
+end)
 
 -- ── Auto save ─────────────────────────────────────────────────
 task.spawn(function() while true do task.wait(5); saveSettings() end end)
