@@ -7,28 +7,27 @@ local RunService       = game:GetService("RunService")
 local TweenService     = game:GetService("TweenService")
 local VirtualUser      = game:GetService("VirtualUser")
 local Lighting         = game:GetService("Lighting")
--- wait for game to fully load (critical for queue_on_teleport re-execute)
-if not game:IsLoaded() then game.Loaded:Wait() end
-task.wait(1)
-
-local LP = Players.LocalPlayer
-while not LP do
-    Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+-- wait for game + player to be fully ready (queue_on_teleport runs very early)
+task.wait(3)
+local LP
+for _ = 1, 100 do
     LP = Players.LocalPlayer
+    if LP and LP:FindFirstChildOfClass("PlayerGui") then break end
+    task.wait(0.2)
 end
-while not LP:FindFirstChildOfClass("PlayerGui") do
-    task.wait(0.1)
-end
+if not LP then return end -- give up if player never loaded
 local function getChar()  return LP.Character end
 local function getHuman() local c=getChar() return c and c:FindFirstChildOfClass("Humanoid") end
 local function getRoot()  local c=getChar() return c and c:FindFirstChild("HumanoidRootPart") end
 
 -- ── Re-execute guard (prevent double load) ───────────────────
 if _G.AniPixelsRunning then
-    -- already running, this is a re-exec: destroy old gui and continue
-    if LP.PlayerGui:FindFirstChild("AniPixelsGUI") then
-        LP.PlayerGui.AniPixelsGUI:Destroy()
-    end
+    pcall(function()
+        if LP and LP.PlayerGui then
+            local old = LP.PlayerGui:FindFirstChild("AniPixelsGUI")
+            if old then old:Destroy() end
+        end
+    end)
 else
     _G.AniPixelsRunning = true
 end
