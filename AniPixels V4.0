@@ -1991,11 +1991,12 @@ end)
 
 task.spawn(function()
     while true do
+        if not FSBattle or not FSBattle.Parent then break end
         if states.farmActive then
             -- update battle indicator
             local inBattle=isInBattle()
             if inBattle then
-                FSBattle.Text="● In battle"; FSBattle.TextColor3=C.green
+                pcall(function() FSBattle.Text="● In battle"; FSBattle.TextColor3=C.green end)
                 task.wait(2)
             else
                 FSBattle.Text="● Not in battle"; FSBattle.TextColor3=C.sub
@@ -2060,14 +2061,17 @@ end)
 -- update farm status dot periodically
 task.spawn(function()
     while true do task.wait(1)
+        if not FSBattle or not FSBattle.Parent then break end
         local inBattle=isInBattle()
         if states.farmActive then
-            FSBattle.Text= inBattle and "● In battle" or "● Not in battle"
-            FSBattle.TextColor3= inBattle and C.green or C.sub
+            pcall(function()
+                FSBattle.Text= inBattle and "● In battle" or "● Not in battle"
+                FSBattle.TextColor3= inBattle and C.green or C.sub
+            end)
         end
         local cnt=0; for _,_ in pairs(farmTargets) do cnt=cnt+1 end
         if states.farmActive then
-            FSStatus.Text="ON · "..cnt.." target(s)"
+            pcall(function() FSStatus.Text="ON · "..cnt.." target(s)" end)
         end
     end
 end)
