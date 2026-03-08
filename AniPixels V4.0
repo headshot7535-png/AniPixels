@@ -1870,28 +1870,41 @@ local function syncRejoinFlag()
 end
 syncRejoinFlag()
 
--- Fire when YOU teleport to a new server (server hop, etc.)
-game:GetService("TeleportService").LocalPlayerArrivedFromTeleport:Connect(function()
-    if states.autoReExec then
-        task.wait(3) -- let game finish loading
-        pcall(function()
-            loadstring(game:HttpGet(REEXEC_URL, true))()
-        end)
-    end
-end)
-
 -- Fire when the SERVER kicks/teleports you out
 game:GetService("Players").LocalPlayer.OnTeleport:Connect(function(teleportState)
     if teleportState == Enum.TeleportState.RequestedByServer then
-        syncRejoinFlag() -- make sure _G is set before we leave
+        syncRejoinFlag()
     end
 end)
 
--- Keep _G flag live while toggle is on
+-- queue_on_teleport: runs in the new server after teleport, supported by most executors
+-- this avoids the [CrossExperience] loadstring block
+if states.autoReExec then
+    pcall(function()
+        if queue_on_teleport then
+            queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'", true))()')
+        end
+    end)
+end
+
+-- Re-queue every time toggle is turned on so it stays armed
+-- (handled by syncRejoinFlag loop below)
+
+-- Keep _G flag live and keep queue_on_teleport armed while toggle is on
 task.spawn(function()
+    local wasOn = false
     while true do
         task.wait(2)
         syncRejoinFlag()
+        -- re-arm queue_on_teleport whenever toggle flips on
+        if states.autoReExec and not wasOn then
+            pcall(function()
+                if queue_on_teleport then
+                    queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'", true))()')
+                end
+            end)
+        end
+        wasOn = states.autoReExec
     end
 end)
 -- ── Server Hop loop (Dragon Ball aware) ─────────────────────
