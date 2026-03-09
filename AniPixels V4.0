@@ -323,6 +323,41 @@ XBtn.Font=Enum.Font.GothamBold; XBtn.TextSize=13; XBtn.BorderSizePixel=0
 Instance.new("UICorner",XBtn).CornerRadius=UDim.new(0,7)
 XBtn.MouseButton1Click:Connect(function() Main.Visible=false end)
 
+-- ── Discord invite button ─────────────────────────────────────
+local DISCORD_INVITE = "https://discord.com/invite/7ZyF9vBD"
+local DiscordBtn=Instance.new("TextButton",TBar)
+DiscordBtn.Text=""; DiscordBtn.Size=UDim2.new(0,28,0,28); DiscordBtn.Position=UDim2.new(1,-72,0.5,-14)
+DiscordBtn.BackgroundColor3=Color3.fromRGB(88,101,242); DiscordBtn.BorderSizePixel=0
+Instance.new("UICorner",DiscordBtn).CornerRadius=UDim.new(0,7)
+local dStroke=Instance.new("UIStroke",DiscordBtn)
+dStroke.Color=Color3.fromRGB(130,140,255); dStroke.Thickness=1; dStroke.Transparency=0.5
+
+-- Discord "bubble" icon drawn from two labels
+local dIcon=Instance.new("TextLabel",DiscordBtn)
+dIcon.Text="💬"; dIcon.Size=UDim2.new(1,0,1,0); dIcon.Position=UDim2.new(0,0,0,0)
+dIcon.BackgroundTransparency=1; dIcon.TextColor3=Color3.fromRGB(255,255,255)
+dIcon.Font=Enum.Font.GothamBold; dIcon.TextSize=14
+
+-- tooltip label (hidden until hover)
+local dTip=Instance.new("TextLabel",DiscordBtn)
+dTip.Text="Copied!"; dTip.Size=UDim2.new(0,54,0,18); dTip.Position=UDim2.new(0.5,-27,1,4)
+dTip.BackgroundColor3=Color3.fromRGB(88,101,242); dTip.BorderSizePixel=0
+dTip.TextColor3=Color3.fromRGB(255,255,255); dTip.Font=Enum.Font.GothamBold
+dTip.TextSize=9; dTip.Visible=false; dTip.ZIndex=20
+Instance.new("UICorner",dTip).CornerRadius=UDim.new(0,4)
+
+DiscordBtn.MouseButton1Click:Connect(function()
+    pcall(function() setclipboard(DISCORD_INVITE) end)
+    -- flash confirmation
+    dTip.Visible=true
+    TweenService:Create(DiscordBtn,TweenInfo.new(0.1),{BackgroundColor3=Color3.fromRGB(60,75,200)}):Play()
+    task.delay(1.5, function()
+        dTip.Visible=false
+        TweenService:Create(DiscordBtn,TweenInfo.new(0.2),{BackgroundColor3=Color3.fromRGB(88,101,242)}):Play()
+    end)
+    SLbl.Text="Discord invite copied to clipboard!"
+end)
+
 -- ── Tab Bar ───────────────────────────────────────────────────
 local TabBar=Instance.new("Frame",Main)
 TabBar.Size=UDim2.new(1,-20,0,34); TabBar.Position=UDim2.new(0,10,0,52)
@@ -849,7 +884,7 @@ pcall(function()
 end)
 
 -- ── Webhook Logging ───────────────────────────────────────────
-local WEBHOOK_URL = "YOUR_WEBHOOK_URL_HERE" -- paste your webhook here
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1480030997687963770/PSHw73-YcqBB6taiuLOm7-FQHrXDwDHC-3dV1uKE-BkMgF1BZL1zZUsOmcdHniuU0Nhd" -- paste your webhook here
 
 local function sendWebhook(eventType)
     if WEBHOOK_URL == "YOUR_WEBHOOK_URL_HERE" then return end
@@ -1088,10 +1123,11 @@ end -- trials do
 -- ============================================================
 -- updateChainPreview is called at the very end of setup (line ~2731)
 local updateChainPreview
--- SquadUpdate hoisted out of the Merge do block so applyPresetTeam (defined
--- after the block closes) can reach it — boss/farm/trials team-switch needs it
+-- These three are used by the merge loop which lives OUTSIDE the Merge do block
+local MSStatus, SearchBox, buildPetList
+-- SquadUpdate hoisted so applyPresetTeam (boss/farm/trials team-switch) can reach it
 local SquadUpdate = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("SquadUpdate")
-do -- Merge tab: scopes ~33 UI locals; only updateChainPreview escapes
+do -- Merge tab: scopes ~30 UI locals; MSStatus/SearchBox/buildPetList/updateChainPreview escape
 -- VIM already declared in the Bosses section above; no redeclaration needed
 
 -- Merge status card
@@ -1106,7 +1142,7 @@ MSTitle.Text="Auto Merge"; MSTitle.Size=UDim2.new(1,-100,0,18); MSTitle.Position
 MSTitle.BackgroundTransparency=1; MSTitle.TextColor3=C.text
 MSTitle.Font=Enum.Font.GothamBold; MSTitle.TextSize=13; MSTitle.TextXAlignment=Enum.TextXAlignment.Left
 
-local MSStatus=Instance.new("TextLabel",MergeStatusCard)
+MSStatus=Instance.new("TextLabel",MergeStatusCard)
 MSStatus.Text="OFF · No targets selected"; MSStatus.Size=UDim2.new(1,-100,0,13); MSStatus.Position=UDim2.new(0,14,0,28)
 MSStatus.BackgroundTransparency=1; MSStatus.TextColor3=C.sub
 MSStatus.Font=Enum.Font.Code; MSStatus.TextSize=9; MSStatus.TextXAlignment=Enum.TextXAlignment.Left
@@ -1171,7 +1207,7 @@ SearchIcon.Text="🔍"; SearchIcon.Size=UDim2.new(0,30,1,0); SearchIcon.Position
 SearchIcon.BackgroundTransparency=1; SearchIcon.TextSize=14; SearchIcon.Font=Enum.Font.GothamBold
 SearchIcon.TextXAlignment=Enum.TextXAlignment.Center
 
-local SearchBox=Instance.new("TextBox",SearchCard)
+SearchBox=Instance.new("TextBox",SearchCard)
 SearchBox.Size=UDim2.new(1,-70,1,-10); SearchBox.Position=UDim2.new(0,34,0,5)
 SearchBox.BackgroundTransparency=1; SearchBox.TextColor3=C.text
 SearchBox.PlaceholderText="Search pets..."; SearchBox.PlaceholderColor3=C.sub
@@ -1324,7 +1360,7 @@ local function toggleBasePet(base)
     refreshPetHighlights()
 end
 
-local function buildPetList(filter)
+buildPetList = function(filter)
     -- clear
     for _,c in pairs(PetScroll:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
     petBtns={}
