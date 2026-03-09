@@ -47,7 +47,7 @@ local states = {
     mergeActive=false,
     farmNoTP=false,
     bossNoTP=false, farmActive=false,
-    trialsActive=false, trialsNoTP=false,
+    trialsActive=false, trialsNoTP=false, trialsNoLeave=false,
     serverHop=false,
     dragonBall=false,
     doorUnlock=false,
@@ -1064,6 +1064,8 @@ MakeSliderCard(PBosses,"Fight Interval","seconds between auto fight attempts",9,
 --  TRIALS TAB
 -- ============================================================
 local trialsDelay = 8
+local trialsRetryDelay = 1
+local leaveWave   = 5   -- exit trial when WaveLabel hits this wave, then restart
 local TSLbl
 do
 
@@ -1095,12 +1097,15 @@ Instance.new("UICorner",TPillBtn).CornerRadius=UDim.new(0,8)
 
 SectionLabel(PTrials,"Options",2)
 MakeToggleCard(PTrials,"🚫","No TP","Don't teleport to trial model before fighting",3,"trialsNoTP")
+MakeToggleCard(PTrials,"♾️","No Leave","Run waves indefinitely — ignore Leave at Wave",4,"trialsNoLeave")
 
-SectionLabel(PTrials,"Fight Interval",4)
-trialsDelay = 8
-MakeSliderCard(PTrials,"Fight Interval","seconds between trial fight attempts",5,1,30,trialsDelay,
-    function(v) return string.format("%.0fs",v) end,
-    function(v) trialsDelay=v end)
+trialsDelay = 0
+trialsRetryDelay = 0.5
+
+SectionLabel(PTrials,"Leave at Wave",6)
+MakeSliderCard(PTrials,"Leave at Wave","exits and restarts trial at this wave",7,1,100,leaveWave,
+    function(v) return "Wave "..math.floor(v) end,
+    function(v) leaveWave=math.floor(v) end)
 
 -- Toggle
 local function setTrials(on)
@@ -1520,17 +1525,9 @@ end)
 --  FARM TAB
 -- ============================================================
 local function isInBattle()
-    pcall(function()
-        local gui=LP.PlayerGui:FindFirstChild("ScreenGui")
-        if gui then
-            local bf=gui:FindFirstChild("BattleFrame")
-            if bf then return bf.Visible end
-        end
-    end)
-    -- fallback: check all ScreenGuis
     for _,sg in pairs(LP.PlayerGui:GetChildren()) do
         if sg:IsA("ScreenGui") then
-            local bf=sg:FindFirstChild("BattleFrame")
+            local bf = sg:FindFirstChild("BattleFrame")
             if bf and bf.Visible then return true end
         end
     end
@@ -2343,75 +2340,148 @@ bossLoop("autoMadara","Madara Ten Tails")
 -- Remote used to activate the trial session before RequestBattle
 local TrialsMode = game:GetService("ReplicatedStorage")
     :WaitForChild("Events"):WaitForChild("TrialsMode")
+local BattleResult = game:GetService("ReplicatedStorage")
+    :WaitForChild("Events"):WaitForChild("BattleResult")
 
 task.spawn(function()
     while true do
         if RUN_GEN ~= _G.AniPixels_RunGen then break end
-        if states.trialsActive then
-            if isInBattle() then
-                TSLbl.Text="⏳ In battle..."
-                task.wait(2)
-            else
-                -- Step 1: fire TrialsMode to activate the session
-                TSLbl.Text="▶ Starting trial session..."
-                local startOk, startErr = pcall(function()
-                    TrialsMode:FireServer({Start=true})
-                end)
-                if not startOk then
-                    TSLbl.Text="❌ TrialsMode: "..tostring(startErr)
-                    task.wait(2)
-                    continue
+        if not states.trialsActive then task.wait(0.3); continue end
+
+        -- ── Start a fresh trial session ──────────────────────────
+        TSLbl.Text="▶ Starting trial session..."
+        local startOk, startErr = pcall(function()
+            TrialsMode:FireServer({Start=true})
+        end)
+        if not startOk then
+            TSLbl.Text="❌ TrialsMode: "..tostring(startErr)
+            task.wait(2); continue
+        end
+
+        -- wait up to 3 s for the cooler model to appear
+        local battleModel = nil
+        for _ = 1, 6 do
+            battleModel = findTrialsModel()
+            if battleModel then break end
+            task.wait(0.5)
+        end
+        if not battleModel then
+            TSLbl.Text="⚠ No cooler model found after 3s"
+            task.wait(2); continue
+        end
+
+        local coolerIndex = 1
+        pcall(function() coolerIndex = battleModel:GetAttribute("CoolerIndex") or 1 end)
+
+        applyPresetTeam("Trials")
+        task.wait(0.2)
+
+        if not states.trialsNoTP then
+            pcall(function()
+                local root = getRoot()
+                if not root then return end
+                local hrp = battleModel:FindFirstChild("HumanoidRootPart")
+                local pos = hrp and hrp.Position or battleModel:GetModelCFrame().Position
+                root.CFrame = CFrame.new(pos + Vector3.new(0, 5, 0))
+            end)
+            task.wait(0.3)
+        end
+
+        -- get WaveLabel and ObjectiveLabel once per session
+        local waveLabel, objLabel = nil, nil
+        pcall(function()
+            local sg = LP.PlayerGui:FindFirstChild("ScreenGui")
+            local tf = sg and sg:FindFirstChild("Trials")
+            waveLabel = tf and tf:FindFirstChild("WaveLabel")
+            objLabel  = tf and tf:FindFirstChild("ObjectiveLabel")
+        end)
+
+        local function getWave()
+            local n = 0
+            pcall(function()
+                if waveLabel and waveLabel.Parent then
+                    n = tonumber(waveLabel.ContentText:match("%d+")) or 0
                 end
+            end)
+            return n
+        end
 
-                -- Step 2: wait 1 s for LocalCoolers model to appear
-                task.wait(1)
-
-                -- Step 3: find the cooler model and optionally TP to it
-                local battleModel = findTrialsModel()
-                if not battleModel then
-                    local folders = {}
-                    for _, c in ipairs(workspace:GetChildren()) do
-                        if c:IsA("Folder") then table.insert(folders, c.Name) end
-                    end
-                    TSLbl.Text="⚠ No cooler model — folders: "..table.concat(folders,",")
-                    task.wait(2)
-                    continue
+        local function getObj()
+            local s = ""
+            pcall(function()
+                if objLabel and objLabel.Parent then
+                    s = objLabel.ContentText or ""
                 end
+            end)
+            return s
+        end
 
-                applyPresetTeam("Trials")
-                task.wait(0.2)
+        -- ── Per-battle loop ──────────────────────────────────────
+        local currentWave = getWave()
+        local sessionAlive = true
 
+        while states.trialsActive and sessionAlive do
+            if RUN_GEN ~= _G.AniPixels_RunGen then break end
+
+            pcall(function()
+                -- TP to cooler
                 if not states.trialsNoTP then
-                    pcall(function()
-                        local root = getRoot()
-                        if not root then return end
+                    local root = getRoot()
+                    if root then
                         local hrp = battleModel:FindFirstChild("HumanoidRootPart")
                         local pos = hrp and hrp.Position or battleModel:GetModelCFrame().Position
                         root.CFrame = CFrame.new(pos + Vector3.new(0, 5, 0))
-                    end)
-                    task.wait(0.3)
+                        task.wait(0.2)
+                    end
                 end
+            end)
 
-                -- Step 4: fire RequestBattle with (nil, coolerIndex)
-                local coolerIndex = 1
-                pcall(function()
-                    coolerIndex = battleModel:GetAttribute("CoolerIndex") or 1
-                end)
-                TSLbl.Text="⚔ "..battleModel.Name.." (idx "..coolerIndex..")"
-                local ok, err = pcall(function()
-                    RequestBattle:FireServer(nil, coolerIndex)
-                end)
-                if ok then
-                    TSLbl.Text="✅ Fired: "..battleModel.Name
-                else
-                    TSLbl.Text="❌ RequestBattle: "..tostring(err)
-                end
+            -- update wave display
+            currentWave = getWave()
+            TSLbl.Text="⚔ Wave "..currentWave.."/" ..(states.trialsNoLeave and "∞" or tostring(leaveWave))
 
-                task.wait(trialsDelay)
+            -- check leaveWave
+            if not states.trialsNoLeave and currentWave >= leaveWave then
+                TSLbl.Text="🚪 Leaving at Wave "..currentWave.."..."
+                pcall(function() TrialsMode:FireServer({Exit=true}) end)
+                task.wait(1.5)
+                sessionAlive = false
+                break
             end
-        else
-            task.wait(0.3)
+
+            -- fire RequestBattle
+            pcall(function() RequestBattle:FireServer(nil, coolerIndex) end)
+
+            -- wait up to 5s for BattleFrame to appear
+            local appeared = false
+            for _ = 1, 10 do
+                task.wait(0.5)
+                if isInBattle() then appeared = true; break end
+            end
+
+            if appeared then
+                -- wait for BattleFrame to close (battle done)
+                local t = 0
+                while isInBattle() and states.trialsActive do
+                    if RUN_GEN ~= _G.AniPixels_RunGen then break end
+                    task.wait(0.3)
+                    t = t + 0.3
+                    if t > 300 then sessionAlive = false; break end
+                end
+                -- spawn delay before next group
+                if trialsDelay > 0 then
+                    TSLbl.Text="⏳ Spawning... ("..trialsDelay.."s)"
+                    task.wait(trialsDelay)
+                end
+            else
+                -- battle never appeared — brief wait and retry
+                TSLbl.Text="⚠ Battle didn't appear, retrying..."
+                task.wait(trialsRetryDelay)
+            end
         end
+
+        -- brief pause before starting a new session
+        task.wait(1)
     end
 end)
 
