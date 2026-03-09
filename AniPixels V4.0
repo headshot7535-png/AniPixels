@@ -1456,13 +1456,9 @@ end -- Merge tab UI
 -- ============================================================
 --  MERGE LOOP LOGIC
 -- ============================================================
-local function pressE()
-    VIM:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-    task.wait(0.1)
-    VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-end
+local RemoteMerge = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RemoteMerge")
 
--- Returns: petName, tierIndex — scans ALL selected targets, returns first ready tier
+-- Returns: petName, tierIndex, baseName — scans ALL selected targets, returns first ready tier
 local function getActiveMergeTier()
     local dInv=LP:FindFirstChild("DoodleInv"); if not dInv then return nil,nil end
     for base,_ in pairs(mergeTargets) do
@@ -1489,34 +1485,20 @@ task.spawn(function()
                 MSStatus.Text="🔀 Merging T"..tier.." "..petName.." (x"..cnt..")"
                 SLbl.Text="Merging: "..petName.." x"..cnt
 
-                -- Equip 4x of this pet (fire twice to ensure server receives it)
+                -- Equip 4x of this pet first — game requires it before RemoteMerge accepts
                 local squad={["1"]=petName,["2"]=petName,["3"]=petName,["4"]=petName}
                 pcall(function() SquadUpdate:FireServer(squad) end)
-                task.wait(0.1)
-                pcall(function() SquadUpdate:FireServer(squad) end)
-                task.wait(0.1)
+                task.wait(0.3)
 
-                -- TP to merge circle only if not already close
-                local root=getRoot()
-                if root then
-                    pcall(function()
-                        local model=workspace:WaitForChild("Map",3):WaitForChild("Lab",3):WaitForChild("Magic Circle",3)
-                        local pos=model:GetModelCFrame().Position
-                        local dist=(root.Position-pos).Magnitude
-                        if dist>20 then
-                            root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
-                            task.wait(0.2)
-                        end
-                    end)
+                -- Now invoke RemoteMerge (RemoteFunction — InvokeServer, not FireServer)
+                local ok, err = pcall(function()
+                    RemoteMerge:InvokeServer(petName)
+                end)
+                if not ok then
+                    MSStatus.Text="❌ RemoteMerge: "..tostring(err)
                 end
 
-                -- Press E rapidly 3 times to ensure merge registers
-                pressE()
-                task.wait(0.1)
-                pressE()
-                task.wait(0.1)
-                pressE()
-                task.wait(0.3)
+                task.wait(0.4)
 
                 -- refresh list
                 buildPetList(SearchBox.Text)
