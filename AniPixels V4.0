@@ -16,21 +16,25 @@ for _ = 1, 100 do
     task.wait(0.2)
 end
 if not LP then return end -- give up if player never loaded
+
+-- ── Generation token — each new execution increments this ────────────────
+-- Every long-running loop/connection stamps itself with RUN_GEN and exits
+-- the moment a newer execution increments _G.AniPixels_RunGen.
+_G.AniPixels_RunGen = (_G.AniPixels_RunGen or 0) + 1
+local RUN_GEN = _G.AniPixels_RunGen
 local function getChar()  return LP.Character end
 local function getHuman() local c=getChar() return c and c:FindFirstChildOfClass("Humanoid") end
 local function getRoot()  local c=getChar() return c and c:FindFirstChild("HumanoidRootPart") end
 
--- ── Re-execute guard (prevent double load) ───────────────────
-if _G.AniPixelsRunning then
-    pcall(function()
-        if LP and LP.PlayerGui then
-            local old = LP.PlayerGui:FindFirstChild("AniPixelsGUI")
-            if old then old:Destroy() end
-        end
-    end)
-else
-    _G.AniPixelsRunning = true
-end
+-- ── Re-execute guard: destroy old GUI; old loops self-exit via RUN_GEN ─
+-- (generation token above is what actually stops ghost loops)
+pcall(function()
+    if LP and LP.PlayerGui then
+        local old = LP.PlayerGui:FindFirstChild("AniPixelsGUI")
+        if old then old:Destroy() end
+    end
+end)
+_G.AniPixelsRunning = true
 
 -- ============================================================
 --  STATE
@@ -360,13 +364,6 @@ SLbl.Font=Enum.Font.Code; SLbl.TextSize=9; SLbl.TextXAlignment=Enum.TextXAlignme
 local tabs = {}         -- name -> {btn, page}
 local activeTab = nil
 
-local tabDefs = {
-    {"⚙️","Features"},
-    {"⚔️","Bosses"},
-    {"⚗️","Trials"},
-    {"🔀","Merge"},
-}
-
 local function switchTab(name)
     activeTab = name
     for tname, td in pairs(tabs) do
@@ -411,9 +408,11 @@ local PFarm     = makeTabBtn("🌾","Farm")
 local PDragon   = makeTabBtn("🐉","Dragon")
 
 -- ============================================================
---  DRAGON BALL TAB
+--  DRAGON BALL TAB  (UI locals scoped; 5 upvalues hoisted for loops)
 -- ============================================================
--- Status card
+-- upvalues needed by the dragon-ball loop and server-hop loop below
+local DBStatus, DBFound, dbDots, DBLog, setDragon
+do
 local DBStatusCard=Instance.new("Frame",PDragon)
 DBStatusCard.Size=UDim2.new(1,-10,0,72); DBStatusCard.BackgroundColor3=C.card
 DBStatusCard.BorderSizePixel=0; DBStatusCard.LayoutOrder=1
@@ -425,12 +424,12 @@ DBTitle.Text="Dragon Ball Collector"; DBTitle.Size=UDim2.new(1,-100,0,18); DBTit
 DBTitle.BackgroundTransparency=1; DBTitle.TextColor3=C.text
 DBTitle.Font=Enum.Font.GothamBold; DBTitle.TextSize=13; DBTitle.TextXAlignment=Enum.TextXAlignment.Left
 
-local DBStatus=Instance.new("TextLabel",DBStatusCard)
+DBStatus=Instance.new("TextLabel",DBStatusCard)
 DBStatus.Text="OFF · Waiting for balls to spawn"; DBStatus.Size=UDim2.new(1,-100,0,13); DBStatus.Position=UDim2.new(0,14,0,28)
 DBStatus.BackgroundTransparency=1; DBStatus.TextColor3=C.sub
 DBStatus.Font=Enum.Font.Code; DBStatus.TextSize=9; DBStatus.TextXAlignment=Enum.TextXAlignment.Left
 
-local DBFound=Instance.new("TextLabel",DBStatusCard)
+DBFound=Instance.new("TextLabel",DBStatusCard)
 DBFound.Text="Found: 0/7"; DBFound.Size=UDim2.new(1,-100,0,12); DBFound.Position=UDim2.new(0,14,0,44)
 DBFound.BackgroundTransparency=1; DBFound.TextColor3=Color3.fromRGB(255,210,50)
 DBFound.Font=Enum.Font.Code; DBFound.TextSize=9; DBFound.TextXAlignment=Enum.TextXAlignment.Left
@@ -446,7 +445,7 @@ DBThumb.BackgroundColor3=C.sub; DBThumb.BorderSizePixel=0
 Instance.new("UICorner",DBThumb).CornerRadius=UDim.new(1,0)
 
 local dbti=TweenInfo.new(0.18,Enum.EasingStyle.Quad)
-local function setDragon(on)
+setDragon = function(on)
     states.dragonBall=on; saveSettings()
     if on then
         TweenService:Create(DBPill,dbti,{BackgroundColor3=Color3.fromRGB(160,120,0)}):Play()
@@ -478,7 +477,7 @@ dbGridLayout.HorizontalAlignment=Enum.HorizontalAlignment.Center
 dbGridLayout.VerticalAlignment=Enum.VerticalAlignment.Center
 dbGridLayout.Padding=UDim.new(0,6)
 
-local dbDots={}
+dbDots={}
 for i=1,7 do
     local dot=Instance.new("Frame",DBGrid)
     dot.Size=UDim2.new(0,28,0,28); dot.BackgroundColor3=Color3.fromRGB(30,25,5)
@@ -492,11 +491,12 @@ for i=1,7 do
 end
 
 -- log label
-local DBLog=Instance.new("TextLabel",PDragon)
+DBLog=Instance.new("TextLabel",PDragon)
 DBLog.Size=UDim2.new(1,-10,0,20); DBLog.BackgroundTransparency=1; DBLog.LayoutOrder=3
 DBLog.TextColor3=C.sub; DBLog.Font=Enum.Font.Code; DBLog.TextSize=9
 DBLog.TextXAlignment=Enum.TextXAlignment.Left; DBLog.Text="  Waiting..."
 
+end -- Dragon Ball Tab UI
 -- ============================================================
 --  REUSABLE COMPONENTS
 -- ============================================================
@@ -1086,8 +1086,11 @@ end -- trials do
 -- ============================================================
 --  MERGE TAB
 -- ============================================================
+-- updateChainPreview is called at the very end of setup (line ~2731)
+local updateChainPreview
+do -- Merge tab: scopes ~33 UI locals; only updateChainPreview escapes
 local SquadUpdate = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("SquadUpdate")
-local VIM=game:GetService("VirtualInputManager")
+-- VIM already declared in the Bosses section above; no redeclaration needed
 
 -- Merge status card
 local MergeStatusCard=Instance.new("Frame",PMerge)
@@ -1258,7 +1261,7 @@ for i=0,3 do
 
     tierRows[i]={name=nameLbl, count=countLbl}
 end
-local function updateChainPreview(base)
+updateChainPreview = function(base)
     if base=="" then
         for i=0,3 do tierRows[i].name.Text="—"; tierRows[i].count.Text="x0" end
         MSChain.Text="Chain: —"; return
@@ -1411,6 +1414,7 @@ SearchBox:GetPropertyChangedSignal("Text"):Connect(function() buildPetList(Searc
 RefreshBtn2.MouseButton1Click:Connect(function() buildPetList(SearchBox.Text) end)
 task.delay(1.2, function() buildPetList("") end)
 
+end -- Merge tab UI
 -- ============================================================
 --  MERGE LOOP LOGIC
 -- ============================================================
@@ -1436,6 +1440,7 @@ end
 
 task.spawn(function()
     while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
         local anyTarget=next(mergeTargets)~=nil
         if states.mergeActive and anyTarget then
             local petName,tier,activeBase=getActiveMergeTier()
@@ -1494,8 +1499,6 @@ end)
 -- ============================================================
 --  FARM TAB
 -- ============================================================
-local RequestBattle2 = RequestBattle
-
 local function isInBattle()
     pcall(function()
         local gui=LP.PlayerGui:FindFirstChild("ScreenGui")
@@ -1638,7 +1641,9 @@ local GridOuter=Instance.new("Frame",PFarm)
 GridOuter.Size=UDim2.new(1,-10,0,296); GridOuter.BackgroundTransparency=1
 GridOuter.BorderSizePixel=0; GridOuter.LayoutOrder=3
 
-for gi,pd in ipairs(presetDefs) do
+-- Helper in its own function scope so its ~17 locals do not count
+-- against the outer function's 200-local register budget.
+local function buildPresetCard(gi, pd)
     local col=(gi-1)%2
     local row=math.floor((gi-1)/2)
     local card=Instance.new("Frame",GridOuter)
@@ -1725,7 +1730,9 @@ for gi,pd in ipairs(presetDefs) do
         useBtn.Text="✓ Applied"
         task.delay(1.5,function() useBtn.Text="▶ Use" end)
     end)
-end
+end -- buildPresetCard
+
+for gi,pd in ipairs(presetDefs) do buildPresetCard(gi, pd) end
 
 -- refresh all displays on load
 task.delay(0.5,function()
@@ -2056,6 +2063,7 @@ end)
 
 task.spawn(function()
     while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
         if not FSBattle or not FSBattle.Parent then break end
         if states.farmActive then
             -- update battle indicator
@@ -2125,7 +2133,9 @@ end)
 
 -- update farm status dot periodically
 task.spawn(function()
-    while true do task.wait(1)
+    while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
+        task.wait(1)
         if not FSBattle or not FSBattle.Parent then break end
         local inBattle=isInBattle()
         if states.farmActive then
@@ -2146,10 +2156,12 @@ end)
 --  FEATURE LOGIC
 -- ============================================================
 UserInputService.JumpRequest:Connect(function()
+    if RUN_GEN ~= _G.AniPixels_RunGen then return end
     if states.infJump then local h=getHuman() if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end
 end)
 
 RunService.Stepped:Connect(function()
+    if RUN_GEN ~= _G.AniPixels_RunGen then return end
     if states.noclip then
         local c=getChar(); if c then
             for _,p in pairs(c:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide=false end end
@@ -2158,10 +2170,12 @@ RunService.Stepped:Connect(function()
 end)
 
 RunService.Heartbeat:Connect(function()
+    if RUN_GEN ~= _G.AniPixels_RunGen then return end
     if states.godMode then local h=getHuman() if h then h.MaxHealth=math.huge; h.Health=math.huge end end
 end)
 
 RunService.Heartbeat:Connect(function()
+    if RUN_GEN ~= _G.AniPixels_RunGen then return end
     if states.fly then
         local root=getRoot(); if not root then return end
         if not flyBV then flyBV=Instance.new("BodyVelocity",root); flyBV.MaxForce=Vector3.new(1e5,1e5,1e5); flyBV.Velocity=Vector3.zero end
@@ -2183,6 +2197,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 RunService.Heartbeat:Connect(function()
+    if RUN_GEN ~= _G.AniPixels_RunGen then return end
     if states.fullBright then
         Lighting.Ambient=Color3.fromRGB(255,255,255); Lighting.OutdoorAmbient=Color3.fromRGB(255,255,255)
         Lighting.Brightness=10; Lighting.FogEnd=1e6; Lighting.FogStart=1e6
@@ -2190,7 +2205,9 @@ RunService.Heartbeat:Connect(function()
 end)
 
 task.spawn(function()
-    while task.wait(55) do
+    while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
+        task.wait(55)
         if states.antiAfk then
             pcall(function() VirtualUser:CaptureController(); VirtualUser:ClickButton2(Vector2.new()) end)
             local r=getRoot(); if r then r.CFrame=r.CFrame*CFrame.new(0,0,0.001) end
@@ -2217,6 +2234,7 @@ local function buildESP(p)
     if ok then espBillboards[p.Name]=bb end
 end
 RunService.Heartbeat:Connect(function()
+    if RUN_GEN ~= _G.AniPixels_RunGen then return end
     if states.esp then
         for _,p in pairs(Players:GetPlayers()) do
             if p~=LP then
@@ -2231,6 +2249,7 @@ RunService.Heartbeat:Connect(function()
 end)
 
 LP.CharacterAdded:Connect(function(c)
+    if RUN_GEN ~= _G.AniPixels_RunGen then return end
     task.wait(1)
     local h=c:WaitForChild("Humanoid"); h.WalkSpeed=walkSpeed
     if flyBV then flyBV:Destroy() flyBV=nil end
@@ -2240,7 +2259,9 @@ end)
 -- ── Boss loops ────────────────────────────────────────────────
 local function bossLoop(key,path)
     task.spawn(function()
+        local myGen = RUN_GEN
         while true do
+            if myGen ~= _G.AniPixels_RunGen then break end
             if states[key] then
                 -- skip if already in a battle
                 if isInBattle() then
@@ -2299,50 +2320,74 @@ bossLoop("autoDioHeaven","Dio Over Heaven")
 bossLoop("autoMadara","Madara Ten Tails")
 
 -- ── Trials loop ───────────────────────────────────────────────
+-- Remote used to activate the trial session before RequestBattle
+local TrialsMode = game:GetService("ReplicatedStorage")
+    :WaitForChild("Events"):WaitForChild("TrialsMode")
+
 task.spawn(function()
     while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
         if states.trialsActive then
             if isInBattle() then
                 TSLbl.Text="⏳ In battle..."
                 task.wait(2)
             else
-                local battleModel = findTrialsModel()
+                -- Step 1: fire TrialsMode to activate the session
+                TSLbl.Text="▶ Starting trial session..."
+                local startOk, startErr = pcall(function()
+                    TrialsMode:FireServer({Start=true})
+                end)
+                if not startOk then
+                    TSLbl.Text="❌ TrialsMode: "..tostring(startErr)
+                    task.wait(2)
+                    continue
+                end
 
+                -- Step 2: wait 1 s for LocalCoolers model to appear
+                task.wait(1)
+
+                -- Step 3: find the cooler model and optionally TP to it
+                local battleModel = findTrialsModel()
                 if not battleModel then
                     local folders = {}
                     for _, c in ipairs(workspace:GetChildren()) do
                         if c:IsA("Folder") then table.insert(folders, c.Name) end
                     end
-                    TSLbl.Text="⚠ Folders: "..table.concat(folders,",")
+                    TSLbl.Text="⚠ No cooler model — folders: "..table.concat(folders,",")
                     task.wait(2)
-                else
-                    TSLbl.Text="⚔ "..battleModel.Name
-                    applyPresetTeam("Trials")
-                    task.wait(0.2)
-                    -- TP to model unless No TP is toggled
-                    if not states.trialsNoTP then
-                        pcall(function()
-                            local root = getRoot()
-                            if not root then return end
-                            local hrp = battleModel:FindFirstChild("HumanoidRootPart")
-                            local pos = hrp and hrp.Position or battleModel:GetModelCFrame().Position
-                            root.CFrame = CFrame.new(pos + Vector3.new(0, 5, 0))
-                        end)
-                        task.wait(0.3)
-                    end
-                    -- get the CoolerIndex attribute from the model (used by RequestBattle)
-                    local coolerIndex = 1
-                    pcall(function()
-                        coolerIndex = battleModel:GetAttribute("CoolerIndex") or 1
-                    end)
-                    local ok, err = pcall(function() RequestBattle:FireServer(nil, coolerIndex) end)
-                    if ok then
-                        TSLbl.Text="✅ Fired: "..battleModel.Name
-                    else
-                        TSLbl.Text="❌ "..tostring(err)
-                    end
-                    task.wait(trialsDelay)
+                    continue
                 end
+
+                applyPresetTeam("Trials")
+                task.wait(0.2)
+
+                if not states.trialsNoTP then
+                    pcall(function()
+                        local root = getRoot()
+                        if not root then return end
+                        local hrp = battleModel:FindFirstChild("HumanoidRootPart")
+                        local pos = hrp and hrp.Position or battleModel:GetModelCFrame().Position
+                        root.CFrame = CFrame.new(pos + Vector3.new(0, 5, 0))
+                    end)
+                    task.wait(0.3)
+                end
+
+                -- Step 4: fire RequestBattle with (nil, coolerIndex)
+                local coolerIndex = 1
+                pcall(function()
+                    coolerIndex = battleModel:GetAttribute("CoolerIndex") or 1
+                end)
+                TSLbl.Text="⚔ "..battleModel.Name.." (idx "..coolerIndex..")"
+                local ok, err = pcall(function()
+                    RequestBattle:FireServer(nil, coolerIndex)
+                end)
+                if ok then
+                    TSLbl.Text="✅ Fired: "..battleModel.Name
+                else
+                    TSLbl.Text="❌ RequestBattle: "..tostring(err)
+                end
+
+                task.wait(trialsDelay)
             end
         else
             task.wait(0.3)
@@ -2353,6 +2398,7 @@ end)
 -- ── Door Unlock loop ─────────────────────────────────────────
 task.spawn(function()
     while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
         if states.doorUnlock then
             -- collect all missing pets across all selected doors
             local allMissing = {}
@@ -2438,6 +2484,7 @@ end
 
 task.spawn(function()
     while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
         if states.dragonBall then
             local root = getRoot()
             if not root then task.wait(1); continue end
@@ -2577,6 +2624,7 @@ armQueueOnTeleport()
 task.spawn(function()
     local wasOn = false
     while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
         task.wait(2)
         syncRejoinFlag()
         -- re-arm queue_on_teleport whenever toggle flips on
@@ -2657,6 +2705,7 @@ task.spawn(function()
     end
 
     while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
         if states.serverHop and not isHopping then
             -- wait hopDelay seconds for server to load dragon balls
             SLbl.Text = "🌐 Waiting "..hopDelay.."s for balls to spawn..."
@@ -2697,6 +2746,7 @@ end)
 task.spawn(function()
     local FF = game:GetService("ReplicatedStorage"):WaitForChild("State",5):WaitForChild("FastForward",5)
     while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
         task.wait(0.5)
         if states.fastForward then
             if FF and FF.Value ~= 0.25 then FF.Value = 0.25 end
@@ -2707,14 +2757,21 @@ task.spawn(function()
 end)
 
 -- ── Auto save ─────────────────────────────────────────────────
-task.spawn(function() while true do task.wait(5); saveSettings() end end)
+task.spawn(function()
+    while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
+        task.wait(5); saveSettings()
+    end
+end)
 
 -- ── Apply walk speed ──────────────────────────────────────────
 task.spawn(function() task.wait(1); local h=getHuman(); if h then h.WalkSpeed=walkSpeed end end)
 
 -- ── Status dot pulse ─────────────────────────────────────────
 task.spawn(function()
-    while true do task.wait(1.2)
+    while true do
+        if RUN_GEN ~= _G.AniPixels_RunGen then break end
+        task.wait(1.2)
         local anyOn=false; for _,v in pairs(states) do if v then anyOn=true break end end
         if anyOn then
             TweenService:Create(SDot,TweenInfo.new(0.5),{BackgroundColor3=C.green}):Play()
