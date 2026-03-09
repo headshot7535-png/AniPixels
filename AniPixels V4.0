@@ -43,6 +43,7 @@ local states = {
     mergeActive=false,
     farmNoTP=false,
     bossNoTP=false, farmActive=false,
+    trialsActive=false, trialsNoTP=false,
     serverHop=false,
     dragonBall=false,
     doorUnlock=false,
@@ -362,6 +363,7 @@ local activeTab = nil
 local tabDefs = {
     {"⚙️","Features"},
     {"⚔️","Bosses"},
+    {"⚗️","Trials"},
     {"🔀","Merge"},
 }
 
@@ -403,6 +405,7 @@ end
 
 local PFeatures = makeTabBtn("⚙️","Features")
 local PBosses   = makeTabBtn("⚔️","Bosses")
+local PTrials   = makeTabBtn("⚗️","Trials")
 local PMerge    = makeTabBtn("🔀","Merge")
 local PFarm     = makeTabBtn("🌾","Farm")
 local PDragon   = makeTabBtn("🐉","Dragon")
@@ -771,6 +774,32 @@ local function findCampaignModelForPet(petName)
     return result
 end
 
+local function findTrialsModel()
+    local result = nil
+    pcall(function()
+        -- direct path first
+        local lc = workspace.LocalCoolers
+        if lc then
+            result = lc:GetChildren()[1]
+            return
+        end
+    end)
+    if result then return result end
+    -- fallback: scan all workspace folders
+    pcall(function()
+        for _, child in ipairs(workspace:GetChildren()) do
+            if child:IsA("Folder") and child.Name ~= "Campaign" and child.Name ~= "Battles" and child.Name ~= "Effects" then
+                local model = child:GetChildren()[1]
+                if model and model:FindFirstChild("Pets") then
+                    result = model
+                    return
+                end
+            end
+        end
+    end)
+    return result
+end
+
 local function walkToCampaignAndBattle(folderName, petName)
     local model = findCampaignModelForPet(petName or folderName)
     if not model then return false end
@@ -801,75 +830,23 @@ task.spawn(function()
     refreshPetCampaignMap()
 end)
 
-local DOOR_CONFIG = {
-    ["DBZ Hell"] = {
-        {pet="Krillin", campaign="Wild Goku"},
-        {pet="Cell Jr", campaign="Perfect Cell"},
-        {pet="Android 17", campaign="Wild Androids"},
-        {pet="Future Trunks", campaign="Wild FutureGohan"},
-        {pet="Piccolo", campaign="Z Fighter Duo"},
-    },
-    ["Cell Games Arena"] = {
-        {pet="Golden Experience (Requiem)", campaign="Wild Golden Experience Requiem"},
-        {pet="Purple Haze", campaign="Wild Purple Haze"},
-        {pet="King Crimson", campaign="Wild Diavolo"},
-        {pet="SilverChariot (Requiem)", campaign="Wild SCR"},
-        {pet="Star Platinum", campaign="Wild Jotaro"},
-    },
-    ["Butterfly Estate"] = {
-        {pet="Power", campaign="Wild Powers"},
-        {pet="Makima", campaign="The Cast"},
-        {pet="Denji", campaign="The Cast"},
-        {pet="Hero of Hell", campaign="Wild Hero of Hell"},
-        {pet="Darkness Devil", campaign="Darkness Devil"},
-    },
-    ["Hunter Trial"] = {
-        {pet="Kid", campaign="Wild Kid"},
-        {pet="Shanks", campaign="Wild Law"},
-        {pet="Queen", campaign="Wild Kaido"},
-        {pet="Yamato", campaign="Wild Yamato"},
-        {pet="Law", campaign="Wild Law"},
-    },
-    ["Jason's Chambers"] = {
-        {pet="Sung Jinwoo", campaign="Wild SungJinwoo"},
-        {pet="Beru", campaign="Wild Beru"},
-        {pet="Iron", campaign="Wild Iron"},
-        {pet="Tusk", campaign="Wild Tusks"},
-        {pet="Baek Yonhoo", campaign="Baek Yonhoo"},
-    },
-    ["Forest of Death (Safari)"] = {
-        {pet="Kaido", campaign="Wild Kaido"},
-        {pet="Shanks", campaign="Wild Law"},
-        {pet="Krillin", campaign="Wild Goku"},
-    },
-    ["Solo Leveling"] = {
-        {pet="Hisoka", campaign="Crazy Duo"},
-        {pet="Kurapika", campaign="Friends"},
-        {pet="Killua", campaign="Double Trouble"},
-        {pet="Gon (End)", campaign="The Gons"},
-        {pet="Chrollo", campaign="Phantom Troupe"},
-    },
-    ["Subway"] = {
-        {pet="Toji", campaign="Goated Sorcerers"},
-        {pet="Maki Zenin", campaign="Sorcerer Duo"},
-        {pet="Nanami", campaign="Goated Sorcerers"},
-        {pet="Mahoraga", campaign="Wild Megumi"},
-        {pet="Sukuna", campaign="Safari", safariOnly=true},
-    },
-    ["Chainsaw Man Hell"] = {
-        {pet="Yuji", campaign="Wild Itadori"},
-        {pet="Mahito", campaign="Wild Mahito"},
-        {pet="Gojo", campaign="Wild Gojo"},
-        {pet="Uraume", campaign="", safariOnly=true},
-    },
-    ["Shibuya"] = {
-        {pet="Gluttony", campaign="Safari", safariOnly=true},
-        {pet="Lst", campaign="Wild Homunculus"},
-        {pet="Al", campaign="Safari", safariOnly=true},
-        {pet="Ed", campaign="Safari", safariOnly=true},
-        {pet="Wrath", campaign="Wild Homunculus"},
-    },
-}
+-- Build DOOR_CONFIG dynamically from workspace.Map.Doors
+local DOOR_CONFIG = {}
+pcall(function()
+    local doors = workspace:WaitForChild("Map",5):WaitForChild("Doors",5)
+    for _, door in ipairs(doors:GetChildren()) do
+        local required = door:FindFirstChild("Required")
+        if required then
+            local pets = {}
+            for _, pet in ipairs(required:GetChildren()) do
+                table.insert(pets, {pet=pet.Name, campaign=""})
+            end
+            if #pets > 0 then
+                DOOR_CONFIG[door.Name] = pets
+            end
+        end
+    end
+end)
 
 -- ── Webhook Logging ───────────────────────────────────────────
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1480030997687963770/PSHw73-YcqBB6taiuLOm7-FQHrXDwDHC-3dV1uKE-BkMgF1BZL1zZUsOmcdHniuU0Nhd" -- paste your webhook here
@@ -1047,6 +1024,64 @@ SectionLabel(PBosses,"Fight Interval",8)
 MakeSliderCard(PBosses,"Fight Interval","seconds between auto fight attempts",9,0.3,10,autoFightDelay,
     function(v) return string.format("%.1fs",v) end,
     function(v) autoFightDelay=v; saveSettings() end)
+
+-- ============================================================
+--  TRIALS TAB
+-- ============================================================
+local trialsDelay = 8
+local TSLbl
+do
+
+-- Status card
+local TStatusCard=Instance.new("Frame",PTrials)
+TStatusCard.Size=UDim2.new(1,-10,0,72); TStatusCard.BackgroundColor3=C.card
+TStatusCard.BorderSizePixel=0; TStatusCard.LayoutOrder=1
+Instance.new("UICorner",TStatusCard).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",TStatusCard).Color=C.border
+
+local TStatusTitle=Instance.new("TextLabel",TStatusCard)
+TStatusTitle.Position=UDim2.new(0,10,0,6); TStatusTitle.Size=UDim2.new(0.5,0,0,18)
+TStatusTitle.BackgroundTransparency=1; TStatusTitle.Text="⚗️ Trials Mode"
+TStatusTitle.TextColor3=C.text; TStatusTitle.Font=Enum.Font.GothamBold; TStatusTitle.TextSize=12
+TStatusTitle.TextXAlignment=Enum.TextXAlignment.Left
+
+TSLbl=Instance.new("TextLabel",TStatusCard)
+TSLbl.Position=UDim2.new(0,10,0,26); TSLbl.Size=UDim2.new(1,-20,0,16)
+TSLbl.BackgroundTransparency=1; TSLbl.Text="Idle"
+TSLbl.TextColor3=C.sub; TSLbl.Font=Enum.Font.Gotham; TSLbl.TextSize=10
+TSLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+local TPillBtn=Instance.new("TextButton",TStatusCard)
+TPillBtn.Size=UDim2.new(0,60,0,22); TPillBtn.Position=UDim2.new(1,-70,0.5,-11)
+TPillBtn.Text="START"; TPillBtn.Font=Enum.Font.GothamBold; TPillBtn.TextSize=10
+TPillBtn.BackgroundColor3=Color3.fromRGB(60,180,80); TPillBtn.TextColor3=Color3.fromRGB(255,255,255)
+TPillBtn.BorderSizePixel=0
+Instance.new("UICorner",TPillBtn).CornerRadius=UDim.new(0,8)
+
+SectionLabel(PTrials,"Options",2)
+MakeToggleCard(PTrials,"🚫","No TP","Don't teleport to trial model before fighting",3,"trialsNoTP")
+
+SectionLabel(PTrials,"Fight Interval",4)
+trialsDelay = 8
+MakeSliderCard(PTrials,"Fight Interval","seconds between trial fight attempts",5,1,30,trialsDelay,
+    function(v) return string.format("%.0fs",v) end,
+    function(v) trialsDelay=v end)
+
+-- Toggle
+local function setTrials(on)
+    states.trialsActive=on; saveSettings()
+    if on then
+        TPillBtn.Text="STOP"; TPillBtn.BackgroundColor3=Color3.fromRGB(180,60,60)
+        TSLbl.Text="Running..."
+    else
+        TPillBtn.Text="START"; TPillBtn.BackgroundColor3=Color3.fromRGB(60,180,80)
+        TSLbl.Text="Idle"
+    end
+end
+if states.trialsActive then setTrials(true) end
+TPillBtn.MouseButton1Click:Connect(function() setTrials(not states.trialsActive) end)
+
+end -- trials do
 
 -- ============================================================
 --  MERGE TAB
@@ -1707,10 +1742,11 @@ MakeToggleCard(PFarm,"🚫","Disable Teleport","Farm in-place · no auto TP to t
 
 SectionLabel(PFarm,"Door Unlock",4)
 
+local DoorStatusLbl
+local checkOwned
+do
 -- multi-select door list
 local doorNames = {}
-for k,_ in pairs(DOOR_CONFIG) do table.insert(doorNames, k) end
-table.sort(doorNames)
 
 -- search box
 local DoorSearchCard=Instance.new("Frame",PFarm)
@@ -1742,7 +1778,7 @@ DoorLayout.SortOrder=Enum.SortOrder.LayoutOrder; DoorLayout.Padding=UDim.new(0,2
 Instance.new("UIPadding",DoorScroll).PaddingTop=UDim.new(0,4)
 
 -- status label
-local DoorStatusLbl=Instance.new("TextLabel",PFarm)
+DoorStatusLbl=Instance.new("TextLabel",PFarm)
 DoorStatusLbl.Size=UDim2.new(1,-10,0,18); DoorStatusLbl.BackgroundTransparency=1
 DoorStatusLbl.TextColor3=C.sub; DoorStatusLbl.Font=Enum.Font.Code; DoorStatusLbl.TextSize=9
 DoorStatusLbl.TextXAlignment=Enum.TextXAlignment.Left; DoorStatusLbl.LayoutOrder=4
@@ -1750,7 +1786,7 @@ DoorStatusLbl.Text="  Select doors to unlock"
 
 local doorBtns = {}
 
-local function checkOwned(petName)
+function checkOwned(petName)
     local owned = false
     pcall(function()
         local dInv = LP:FindFirstChild("DoodleInv")
@@ -1769,6 +1805,27 @@ local function checkOwned(petName)
 end
 
 local function buildDoorList(filter)
+    -- rebuild DOOR_CONFIG from workspace each time in case it wasn't ready at start
+    if next(DOOR_CONFIG) == nil then
+        pcall(function()
+            local doors = workspace:WaitForChild("Map",3):WaitForChild("Doors",3)
+            for _, door in ipairs(doors:GetChildren()) do
+                local required = door:FindFirstChild("Required")
+                if required then
+                    local pets = {}
+                    for _, pet in ipairs(required:GetChildren()) do
+                        table.insert(pets, {pet=pet.Name, campaign=""})
+                    end
+                    if #pets > 0 then DOOR_CONFIG[door.Name] = pets end
+                end
+            end
+        end)
+    end
+    -- rebuild doorNames
+    doorNames = {}
+    for k,_ in pairs(DOOR_CONFIG) do table.insert(doorNames, k) end
+    table.sort(doorNames)
+
     for _,c in pairs(DoorScroll:GetChildren()) do
         if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
     end
@@ -1875,10 +1932,15 @@ end
 local setDoorUnlock = MakeToggleCard(PFarm,"🔓","Auto Door Unlock","Farms required pets for selected doors",4,"doorUnlock")
 task.defer(function() if states.doorUnlock and setDoorUnlock then setDoorUnlock(true) end end)
 
+end -- door do
+
 SectionLabel(PFarm,"Campaign Targets",6)
 
 refreshPetCampaignMap()
 
+local FSearchBox, FRefreshBtn
+local buildFarmPetList
+do
 -- search box
 local FSearchCard=Instance.new("Frame",PFarm)
 FSearchCard.Size=UDim2.new(1,-10,0,38); FSearchCard.BackgroundColor3=C.card
@@ -1890,14 +1952,14 @@ local FSearchIcon=Instance.new("TextLabel",FSearchCard)
 FSearchIcon.Text="🔍"; FSearchIcon.Size=UDim2.new(0,30,1,0); FSearchIcon.Position=UDim2.new(0,4,0,0)
 FSearchIcon.BackgroundTransparency=1; FSearchIcon.TextSize=14; FSearchIcon.Font=Enum.Font.GothamBold
 
-local FSearchBox=Instance.new("TextBox",FSearchCard)
+FSearchBox=Instance.new("TextBox",FSearchCard)
 FSearchBox.Size=UDim2.new(1,-70,1,0); FSearchBox.Position=UDim2.new(0,32,0,0)
 FSearchBox.BackgroundTransparency=1; FSearchBox.TextColor3=C.text
 FSearchBox.Font=Enum.Font.Code; FSearchBox.TextSize=11
 FSearchBox.PlaceholderText="search pets..."; FSearchBox.Text=""
 FSearchBox.TextXAlignment=Enum.TextXAlignment.Left
 
-local FRefreshBtn=Instance.new("TextButton",FSearchCard)
+FRefreshBtn=Instance.new("TextButton",FSearchCard)
 FRefreshBtn.Text="↻"; FRefreshBtn.Size=UDim2.new(0,30,0,26); FRefreshBtn.Position=UDim2.new(1,-34,0.5,-13)
 FRefreshBtn.BackgroundColor3=C.border; FRefreshBtn.TextColor3=C.text
 FRefreshBtn.Font=Enum.Font.GothamBold; FRefreshBtn.TextSize=16; FRefreshBtn.BorderSizePixel=0
@@ -1923,7 +1985,7 @@ FSCount.Size=UDim2.new(1,-10,0,16); FSCount.BackgroundTransparency=1; FSCount.La
 FSCount.TextColor3=C.sub; FSCount.Font=Enum.Font.Code; FSCount.TextSize=9
 FSCount.TextXAlignment=Enum.TextXAlignment.Left; FSCount.Text="  0 selected"
 
-local function buildFarmPetList(filter)
+buildFarmPetList = function(filter)
     for _,c in pairs(FScroll:GetChildren()) do
         if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end
     end
@@ -1982,6 +2044,7 @@ local function buildFarmPetList(filter)
     local sel=0; for _ in pairs(farmTargets) do sel=sel+1 end
     FSCount.Text="  "..sel.." selected · "..count.." shown"
 end
+end -- farm search do
 
 buildFarmPetList("")
 FSearchBox:GetPropertyChangedSignal("Text"):Connect(function() buildFarmPetList(FSearchBox.Text) end)
@@ -2235,6 +2298,58 @@ bossLoop("autoAllForOne","All For One")
 bossLoop("autoDioHeaven","Dio Over Heaven")
 bossLoop("autoMadara","Madara Ten Tails")
 
+-- ── Trials loop ───────────────────────────────────────────────
+task.spawn(function()
+    while true do
+        if states.trialsActive then
+            if isInBattle() then
+                TSLbl.Text="⏳ In battle..."
+                task.wait(2)
+            else
+                local battleModel = findTrialsModel()
+
+                if not battleModel then
+                    local folders = {}
+                    for _, c in ipairs(workspace:GetChildren()) do
+                        if c:IsA("Folder") then table.insert(folders, c.Name) end
+                    end
+                    TSLbl.Text="⚠ Folders: "..table.concat(folders,",")
+                    task.wait(2)
+                else
+                    TSLbl.Text="⚔ "..battleModel.Name
+                    applyPresetTeam("Trials")
+                    task.wait(0.2)
+                    -- TP to model unless No TP is toggled
+                    if not states.trialsNoTP then
+                        pcall(function()
+                            local root = getRoot()
+                            if not root then return end
+                            local hrp = battleModel:FindFirstChild("HumanoidRootPart")
+                            local pos = hrp and hrp.Position or battleModel:GetModelCFrame().Position
+                            root.CFrame = CFrame.new(pos + Vector3.new(0, 5, 0))
+                        end)
+                        task.wait(0.3)
+                    end
+                    -- get the CoolerIndex attribute from the model (used by RequestBattle)
+                    local coolerIndex = 1
+                    pcall(function()
+                        coolerIndex = battleModel:GetAttribute("CoolerIndex") or 1
+                    end)
+                    local ok, err = pcall(function() RequestBattle:FireServer(nil, coolerIndex) end)
+                    if ok then
+                        TSLbl.Text="✅ Fired: "..battleModel.Name
+                    else
+                        TSLbl.Text="❌ "..tostring(err)
+                    end
+                    task.wait(trialsDelay)
+                end
+            end
+        else
+            task.wait(0.3)
+        end
+    end
+end)
+
 -- ── Door Unlock loop ─────────────────────────────────────────
 task.spawn(function()
     while true do
@@ -2417,6 +2532,7 @@ task.spawn(function()
     end
 end)
 
+do -- auto reexec + server hop
 -- ── Auto Re-Execute on disconnect / new server ──────────────
 local REEXEC_URL = "https://raw.githubusercontent.com/headshot7535-png/AniPixels/main/AniPixels%20V4.0"
 
@@ -2608,12 +2724,14 @@ task.spawn(function()
     end
 end)
 
+end -- auto reexec + server hop
+
 -- ── Activate default tab ──────────────────────────────────────
 switchTab("Features")
 updateChainPreview(mergeTargetBase)
 
-local msg=next(LS) and "✓ Settings restored" or "Ready · v4.0"
-SLbl.Text=msg; print("[AniPixels v4.0] Loaded. "..msg)
+do local msg=next(LS) and "✓ Settings restored" or "Ready · v4.0"
+SLbl.Text=msg; print("[AniPixels v4.0] Loaded. "..msg) end
 
 -- log execution to webhook
 task.spawn(function()
