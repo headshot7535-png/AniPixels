@@ -2933,7 +2933,8 @@ task.spawn(sendWebhook)
 --  CHAT TAB  (cross-server via ntfy.sh pub/sub)
 -- ============================================================
 local CHAT_TOPIC = "anipixels_v4_chat2"   -- change to make a private room
-local CHAT_POLL_INTERVAL = 3               -- seconds between polls
+local CHAT_POLL_INTERVAL = 4               -- (unused, kept for reference)
+
 local chatLastId = ""                      -- tracks last seen message id
 local chatRunning = true
 local chatMessages = {}                    -- { {user, text, server} }
@@ -3067,47 +3068,71 @@ ChatInput.FocusLost:Connect(function(enter)
     end
 end)
 
--- poll loop
-task.spawn(function()
+-- WebSocket connection loop (auto-reconnects on drop)
+local function connectWS()
     _G.AniPixels_ChatRunning = (_G.AniPixels_ChatRunning or 0) + 1
     local myChat = _G.AniPixels_ChatRunning
-    addChatLine(nil,"Connected to #"..CHAT_TOPIC,nil,true)
-    local since = "10m"
 
-    while true do
-        -- only stop if a newer chat instance started (re-exec), not on gen change
-        if _G.AniPixels_ChatRunning ~= myChat then break end
-        pcall(function()
-            local res = httpRequest({
-                Url    = "https://ntfy.sh/"..CHAT_TOPIC.."/json?poll=1&since="..since,
-                Method = "GET",
-                Headers= { ["Accept"]="application/json" },
-            })
-            if res and res.StatusCode and res.StatusCode < 400 then
-                    OnlineLbl.Text="🟢 Live · #"..CHAT_TOPIC
-                    if res.Body and res.Body ~= "" then
-                        -- ntfy returns newline-delimited JSON objects
-                        for line in res.Body:gmatch("[^\n]+") do
-                            local ok, obj = pcall(function()
-                                return game:GetService("HttpService"):JSONDecode(line)
-                            end)
-                            if ok and obj and obj.event=="message" and obj.id ~= chatLastId then
-                                chatLastId = obj.id
-                                since = obj.id  -- poll only newer next time
-                                local msg = obj.message or ""
-                                -- parse "username | serverid | text"
-                                local user, server, text = msg:match("^(.+) | (%w+) | (.+)$")
-                                if user and text then
-                                    table.insert(chatMessages, {user=user,text=text,server=server})
-                                    addChatLine(user, text, server, false)
-                                end
-                            end
+    local wsConnect = (syn and syn.websocket and syn.websocket.connect)
+                   or (WebSocket and WebSocket.connect)
+                   or (websocket and websocket.connect)
+                   or nil
+
+    if not wsConnect then
+        addChatLine(nil,"WebSocket not supported by this executor",nil,true)
+        OnlineLbl.Text="🔴 No WebSocket"
+        return
+    end
+
+    local function tryConnect()
+        while true do
+            if _G.AniPixels_ChatRunning ~= myChat then return end
+            OnlineLbl.Text="🟡 Connecting..."
+
+            local ok, ws = pcall(wsConnect, "wss://ntfy.sh/"..CHAT_TOPIC.."/ws")
+            if not ok or not ws then
+                OnlineLbl.Text="🔴 Reconnecting..."
+                task.wait(5)
+            else
+                OnlineLbl.Text="🟢 Live · #"..CHAT_TOPIC
+                addChatLine(nil,"Connected",nil,true)
+
+                local closed = false
+
+                ws.OnMessage:Connect(function(raw)
+                    if _G.AniPixels_ChatRunning ~= myChat then ws:Close(); return end
+                    local ok2, obj = pcall(function()
+                        return game:GetService("HttpService"):JSONDecode(raw)
+                    end)
+                    if ok2 and obj and obj.event == "message" then
+                        local msg = obj.message or ""
+                        local user, server, text = msg:match("^(.+) | (%w+) | (.+)$")
+                        if user and text then
+                            table.insert(chatMessages, {user=user,text=text,server=server})
+                            addChatLine(user, text, server, false)
                         end
                     end
-                else
-                    OnlineLbl.Text="🔴 Can't reach ntfy.sh"
+                end)
+
+                ws.OnClose:Connect(function()
+                    closed = true
+                    if _G.AniPixels_ChatRunning == myChat then
+                        OnlineLbl.Text="🔴 Reconnecting..."
+                        addChatLine(nil,"Disconnected — reconnecting...",nil,true)
+                    end
+                end)
+
+                -- wait until closed
+                while not closed do
+                    if _G.AniPixels_ChatRunning ~= myChat then ws:Close(); return end
+                    task.wait(1)
                 end
-        end)
-        task.wait(CHAT_POLL_INTERVAL)
+                task.wait(3) -- brief pause before reconnect
+            end
+        end
     end
-end)
+
+    task.spawn(tryConnect)
+end
+
+task.spawn(connectWS)
