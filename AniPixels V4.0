@@ -3,7 +3,7 @@
 -- ============================================================
 
 -- ── CONFIGURATION ────────────────────────────────────────────
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1480030997687963770/PSHw73-YcqBB6taiuLOm7-FQHrXDwDHC-3dV1uKE-BkMgF1BZL1zZUsOmcdHniuU0Nhd"  -- paste your Discord webhook URL here
+local WEBHOOK_URL = ""  -- paste your Discord webhook URL here
 
 -- HTTP helper — works across all major executors
 local function httpRequest(opts)
@@ -2937,7 +2937,7 @@ local CHAT_POLL_INTERVAL = 4               -- (unused, kept for reference)
 
 local chatLastId = ""                      -- tracks last seen message id
 local chatRunning = true
-local chatMessages = {}                    -- { {user, text, server} }
+local chatMessages = {}                    -- session only, just for UI tracking
 
 -- helper: short server tag
 local function shortServer()
@@ -2980,7 +2980,7 @@ Instance.new("UIPadding",FeedScroll).PaddingLeft=UDim.new(0,6)
 local function addChatLine(user, text, server, isSystem)
     local row=Instance.new("Frame",FeedScroll)
     row.Size=UDim2.new(1,-6,0,0); row.AutomaticSize=Enum.AutomaticSize.Y
-    row.BackgroundTransparency=1; row.LayoutOrder=#chatMessages
+    row.BackgroundTransparency=1; row.LayoutOrder=#FeedScroll:GetChildren()
 
     local lbl=Instance.new("TextLabel",row)
     lbl.Size=UDim2.new(1,0,0,0); lbl.AutomaticSize=Enum.AutomaticSize.Y
@@ -3034,7 +3034,7 @@ local OnlineLbl=Instance.new("TextLabel",OnlineCard)
 OnlineLbl.Size=UDim2.new(1,0,1,0); OnlineLbl.BackgroundTransparency=1
 OnlineLbl.TextColor3=C.sub; OnlineLbl.Font=Enum.Font.Gotham; OnlineLbl.TextSize=9
 OnlineLbl.TextXAlignment=Enum.TextXAlignment.Left
-OnlineLbl.Text="🟢 Connecting..."
+OnlineLbl.Text="🟡 Connecting..."
 
 -- send function
 local function sendChatMsg(text)
@@ -3088,6 +3088,35 @@ local function connectWS()
         while true do
             if _G.AniPixels_ChatRunning ~= myChat then return end
             OnlineLbl.Text="🟡 Connecting..."
+
+            -- fetch last 20 messages as history before opening WS
+            pcall(function()
+                local res = httpRequest({
+                    Url     = "https://ntfy.sh/"..CHAT_TOPIC.."/json?poll=1&since=1h",
+                    Method  = "GET",
+                    Headers = { ["Accept"] = "application/json" },
+                })
+                if res and res.Body and res.Body ~= "" then
+                    local lines = {}
+                    for line in res.Body:gmatch("[^\n]+") do
+                        table.insert(lines, line)
+                    end
+                    -- only show last 20
+                    local start = math.max(1, #lines - 19)
+                    for i = start, #lines do
+                        local ok, obj = pcall(function()
+                            return game:GetService("HttpService"):JSONDecode(lines[i])
+                        end)
+                        if ok and obj and obj.event == "message" then
+                            local msg = obj.message or ""
+                            local user, server, text = msg:match("^(.+) | (%w+) | (.+)$")
+                            if user and text then
+                                addChatLine(user, text, server, false)
+                            end
+                        end
+                    end
+                end
+            end)
 
             local ok, ws = pcall(wsConnect, "wss://ntfy.sh/"..CHAT_TOPIC.."/ws")
             if not ok or not ws then
