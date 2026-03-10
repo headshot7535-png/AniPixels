@@ -3069,12 +3069,14 @@ end)
 
 -- poll loop
 task.spawn(function()
-    local myGen = RUN_GEN
+    _G.AniPixels_ChatRunning = (_G.AniPixels_ChatRunning or 0) + 1
+    local myChat = _G.AniPixels_ChatRunning
     addChatLine(nil,"Connected to #"..CHAT_TOPIC,nil,true)
-    local since = "10m"  -- on first poll, grab last 10 min of history
+    local since = "10m"
 
-    while chatRunning do
-        if myGen ~= _G.AniPixels_RunGen then break end
+    while true do
+        -- only stop if a newer chat instance started (re-exec), not on gen change
+        if _G.AniPixels_ChatRunning ~= myChat then break end
         pcall(function()
             local res = httpRequest({
                 Url    = "https://ntfy.sh/"..CHAT_TOPIC.."/json?poll=1&since="..since,
