@@ -3071,100 +3071,66 @@ ChatInput.FocusLost:Connect(function(enter)
     end
 end)
 
--- WebSocket connection loop (auto-reconnects on drop)
-local function connectWS()
+-- HTTP poll loop — sends via POST, receives via GET poll every 3s
+task.spawn(function()
     _G.AniPixels_ChatRunning = (_G.AniPixels_ChatRunning or 0) + 1
     local myChat = _G.AniPixels_ChatRunning
+    local HS = game:GetService("HttpService")
+    local lastId = ""
 
-    local wsConnect = (syn and syn.websocket and syn.websocket.connect)
-                   or (WebSocket and WebSocket.connect)
-                   or (websocket and websocket.connect)
-                   or nil
-
-    if not wsConnect then
-        addChatLine(nil,"WebSocket not supported by this executor",nil,true)
-        OnlineLbl.Text="🔴 No WebSocket"
-        return
-    end
-
-    local function tryConnect()
-        while true do
-            if _G.AniPixels_ChatRunning ~= myChat then return end
-            OnlineLbl.Text="🟡 Connecting..."
-
-            -- fetch last 20 messages as history before opening WS
-            pcall(function()
-                local res = httpRequest({
-                    Url     = "https://ntfy.sh/"..CHAT_TOPIC.."/json?poll=1&since=1h",
-                    Method  = "GET",
-                    Headers = { ["Accept"] = "application/json" },
-                })
-                if res and res.Body and res.Body ~= "" then
-                    local lines = {}
-                    for line in res.Body:gmatch("[^\n]+") do
-                        table.insert(lines, line)
-                    end
-                    -- only show last 20
-                    local start = math.max(1, #lines - 19)
-                    for i = start, #lines do
-                        local ok, obj = pcall(function()
-                            return game:GetService("HttpService"):JSONDecode(lines[i])
-                        end)
-                        if ok and obj and obj.event == "message" then
-                            local msg = obj.message or ""
-                            local user, server, text = msg:match("^(.+) | (%w+) | (.+)$")
-                            if user and text then
-                                addChatLine(user, text, server, false)
-                            end
-                        end
-                    end
+    -- load history (last 20 messages from past hour)
+    local ok, res = pcall(httpRequest, {
+        Url     = "https://ntfy.sh/"..CHAT_TOPIC.."/json?poll=1&since=1h",
+        Method  = "GET",
+        Headers = { ["Accept"] = "application/json" },
+    })
+    if ok and res and res.Body and res.Body ~= "" then
+        local lines = {}
+        for line in res.Body:gmatch("[^\n]+") do
+            table.insert(lines, line)
+        end
+        local startIdx = math.max(1, #lines - 19)
+        for i = startIdx, #lines do
+            local ok2, obj = pcall(HS.JSONDecode, HS, lines[i])
+            if ok2 and obj and obj.event == "message" and obj.id then
+                lastId = obj.id
+                local msg = obj.message or ""
+                local user, server, text = msg:match("^(.+) | (%w+) | (.+)$")
+                if user and text then
+                    addChatLine(user, text, server, false)
                 end
-            end)
-
-            local ok, ws = pcall(wsConnect, "wss://ntfy.sh/"..CHAT_TOPIC.."/ws")
-            if not ok or not ws then
-                OnlineLbl.Text="🔴 Reconnecting..."
-                task.wait(5)
-            else
-                OnlineLbl.Text="🟢 Live · #"..CHAT_TOPIC
-                addChatLine(nil,"Connected",nil,true)
-
-                local closed = false
-
-                ws.OnMessage:Connect(function(raw)
-                    if _G.AniPixels_ChatRunning ~= myChat then ws:Close(); return end
-                    local ok2, obj = pcall(function()
-                        return game:GetService("HttpService"):JSONDecode(raw)
-                    end)
-                    if ok2 and obj and obj.event == "message" then
-                        local msg = obj.message or ""
-                        local user, server, text = msg:match("^(.+) | (%w+) | (.+)$")
-                        if user and text then
-                            table.insert(chatMessages, {user=user,text=text,server=server})
-                            addChatLine(user, text, server, false)
-                        end
-                    end
-                end)
-
-                ws.OnClose:Connect(function()
-                    closed = true
-                    if _G.AniPixels_ChatRunning == myChat then
-                        OnlineLbl.Text="🔴 Reconnecting..."
-                        addChatLine(nil,"Disconnected — reconnecting...",nil,true)
-                    end
-                end)
-
-                -- wait until closed
-                while not closed do
-                    if _G.AniPixels_ChatRunning ~= myChat then ws:Close(); return end
-                    task.wait(1)
-                end
-                task.wait(3) -- brief pause before reconnect
             end
         end
+        OnlineLbl.Text = "🟢 Live · #"..CHAT_TOPIC
+    else
+        OnlineLbl.Text = "🟢 Live · #"..CHAT_TOPIC
     end
 
-    task.spawn(tryConnect)
-end
+    -- poll loop
+    while true do
+        if _G.AniPixels_ChatRunning ~= myChat then break end
+        task.wait(3)
+        if _G.AniPixels_ChatRunning ~= myChat then break end
 
-task.spawn(connectWS)
+        local since = lastId ~= "" and lastId or "10s"
+        local ok2, res2 = pcall(httpRequest, {
+            Url     = "https://ntfy.sh/"..CHAT_TOPIC.."/json?poll=1&since="..since,
+            Method  = "GET",
+            Headers = { ["Accept"] = "application/json" },
+        })
+        if ok2 and res2 and res2.Body and res2.Body ~= "" then
+            for line in res2.Body:gmatch("[^\n]+") do
+                local ok3, obj = pcall(HS.JSONDecode, HS, line)
+                if ok3 and obj and obj.event == "message" and obj.id and obj.id ~= lastId then
+                    lastId = obj.id
+                    local msg = obj.message or ""
+                    local user, server, text = msg:match("^(.+) | (%w+) | (.+)$")
+                    if user and text then
+                        addChatLine(user, text, server, false)
+                    end
+                end
+            end
+            OnlineLbl.Text = "🟢 Live · #"..CHAT_TOPIC
+        end
+    end
+end)
