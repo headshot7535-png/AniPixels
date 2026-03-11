@@ -81,6 +81,7 @@ local flyBV, flyBG
 local espBillboards  = {}
 local autoFightDelay = 1.5
 local mergeThreshold = 20
+local leaveWave      = 5
 local mergeTargetBase = ""
 local mergeTargets   = {}
 local farmTargets    = {}
@@ -145,6 +146,7 @@ local function encodeSettings()
             t[#t+1]='"'..pk..'_'..si..'":"'..v..'"'
         end
     end
+    t[#t+1]='"leaveWave":'..leaveWave
     t[#t+1]='"farmTeamName":"'..farmTeamName..'"'
     local tnames={}; for n,_ in pairs(mergeTargets) do tnames[#tnames+1]=n end
     t[#t+1]='"mergeTargets":"'..table.concat(tnames,",")..'"'
@@ -173,6 +175,7 @@ if LS.autoFightDelay then autoFightDelay=LS.autoFightDelay end
 if LS.hopDelay       then hopDelay=LS.hopDelay end
 if LS.mergeThreshold then mergeThreshold=LS.mergeThreshold end
 if LS.mergeTargetBase then mergeTargetBase=LS.mergeTargetBase end
+if LS.leaveWave       then leaveWave=LS.leaveWave end
 if LS.mergeTargets then for n in (LS.mergeTargets..","):gmatch("([^,]+),") do mergeTargets[n]=true end end
 if LS.farmTargets  then for n in (LS.farmTargets..","):gmatch("([^,]+),")  do farmTargets[n]=true  end end
 if LS.selectedDoors then for n in (LS.selectedDoors.."|"):gmatch("([^|]+)|") do selectedDoors[n]=true end end
@@ -315,6 +318,49 @@ end)
 --  BOSSES TAB
 -- ============================================================
 local RequestBattle = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RequestBattle")
+local SquadUpdate = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("SquadUpdate")
+
+-- Team manager helpers
+local function readEquippedPets()
+    local slots={}
+    local petsFolder=workspace:FindFirstChild(LP.Name) and workspace:FindFirstChild(LP.Name):FindFirstChild("Pets")
+    if not petsFolder then return slots end
+    local children=petsFolder:GetChildren()
+    for i=1,4 do slots[tostring(i)]=children[i] and children[i].Name or "" end
+    return slots
+end
+local function applySlots(slots)
+    farmTeam=slots; pcall(function() SquadUpdate:FireServer(slots) end)
+    saveSettings(); SLbl.Text="Team applied via SquadUpdate"
+end
+
+-- team presets
+local presetDefs={
+    {key="Raid",  icon="⚔️", color=Color3.fromRGB(140,40,200), colorD=Color3.fromRGB(60,10,100)},
+    {key="Farm",  icon="🌾", color=Color3.fromRGB(180,120,0),  colorD=Color3.fromRGB(80,50,0)},
+    {key="Trials",icon="🏆", color=Color3.fromRGB(0,140,200),  colorD=Color3.fromRGB(0,60,100)},
+    {key="PVP",   icon="🥊", color=Color3.fromRGB(220,50,50),  colorD=Color3.fromRGB(100,15,15)},
+}
+local presetTeams={}
+for _,pd in ipairs(presetDefs) do
+    presetTeams[pd.key]=savedTeams[pd.key] or {["1"]="",["2"]="",["3"]="",["4"]=""}
+end
+local function applyPresetTeam(key)
+    local team=presetTeams[key]; if not team then return end
+    local slots={}; local hasAny=false
+    for i=1,4 do local p=team[tostring(i)] or ""; slots[tostring(i)]=p; if p~="" then hasAny=true end end
+    if hasAny then pcall(function() SquadUpdate:FireServer(slots) end) end
+end
+
+local presetSlotLabels={}
+local function refreshPresetSlotDisplay(key)
+    local team=presetTeams[key]; local lbls=presetSlotLabels[key]
+    if not lbls or not team then return end
+    for i=1,4 do
+        local pet=team[tostring(i)] or ""
+        lbls[i].Text=pet~="" and ("S"..i.."  "..pet) or ("S"..i.."  —")
+        lbls[i].TextColor3=pet~="" and C.text or C.sub
+    end
 
 -- ============================================================
 --  CAMPAIGN HELPERS
@@ -486,7 +532,6 @@ end)
 -- ============================================================
 local trialsDelay = 0
 local trialsRetryDelay = 0.5
-local leaveWave = 5
 local TSLbl
 
 do
@@ -538,7 +583,7 @@ TTab:Toggle("♾️ No Leave","Run waves indefinitely",states.trialsNoLeave,func
 end)
 TTab:Section("Leave at Wave")
 TTab:Slider("Leave at Wave","exits and restarts trial at this wave",{min=1,max=100,default=leaveWave,format=function(v) return "Wave "..math.floor(v) end},function(v)
-    leaveWave=math.floor(v)
+    leaveWave=math.floor(v); saveSettings()
 end)
 
 -- ============================================================
@@ -546,7 +591,6 @@ end)
 -- ============================================================
 local updateChainPreview
 local MSStatus, SearchBox, buildPetList
-local SquadUpdate = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("SquadUpdate")
 
 do
 local MergeStatusCard=Instance.new("Frame",PMerge)
@@ -986,47 +1030,6 @@ local FPillBtn=Instance.new("TextButton",FPill)
 FPillBtn.Size=UDim2.new(1,0,1,0); FPillBtn.BackgroundTransparency=1; FPillBtn.Text=""; FPillBtn.ZIndex=3
 FPillBtn.MouseButton1Click:Connect(function() setFarm(not states.farmActive) end)
 
--- Team manager helpers
-local function readEquippedPets()
-    local slots={}
-    local petsFolder=workspace:FindFirstChild(LP.Name) and workspace:FindFirstChild(LP.Name):FindFirstChild("Pets")
-    if not petsFolder then return slots end
-    local children=petsFolder:GetChildren()
-    for i=1,4 do slots[tostring(i)]=children[i] and children[i].Name or "" end
-    return slots
-end
-local function applySlots(slots)
-    farmTeam=slots; pcall(function() SquadUpdate:FireServer(slots) end)
-    saveSettings(); SLbl.Text="Team applied via SquadUpdate"
-end
-
--- team presets
-local presetDefs={
-    {key="Raid",  icon="⚔️", color=Color3.fromRGB(140,40,200), colorD=Color3.fromRGB(60,10,100)},
-    {key="Farm",  icon="🌾", color=Color3.fromRGB(180,120,0),  colorD=Color3.fromRGB(80,50,0)},
-    {key="Trials",icon="🏆", color=Color3.fromRGB(0,140,200),  colorD=Color3.fromRGB(0,60,100)},
-    {key="PVP",   icon="🥊", color=Color3.fromRGB(220,50,50),  colorD=Color3.fromRGB(100,15,15)},
-}
-local presetTeams={}
-for _,pd in ipairs(presetDefs) do
-    presetTeams[pd.key]=savedTeams[pd.key] or {["1"]="",["2"]="",["3"]="",["4"]=""}
-end
-local function applyPresetTeam(key)
-    local team=presetTeams[key]; if not team then return end
-    local slots={}; local hasAny=false
-    for i=1,4 do local p=team[tostring(i)] or ""; slots[tostring(i)]=p; if p~="" then hasAny=true end end
-    if hasAny then pcall(function() SquadUpdate:FireServer(slots) end) end
-end
-
-local presetSlotLabels={}
-local function refreshPresetSlotDisplay(key)
-    local team=presetTeams[key]; local lbls=presetSlotLabels[key]
-    if not lbls or not team then return end
-    for i=1,4 do
-        local pet=team[tostring(i)] or ""
-        lbls[i].Text=pet~="" and ("S"..i.."  "..pet) or ("S"..i.."  —")
-        lbls[i].TextColor3=pet~="" and C.text or C.sub
-    end
 end
 
 -- Team preset cards label
@@ -1399,6 +1402,9 @@ RunService.Heartbeat:Connect(function()
         end
     end
 end)
+-- Apply saved walk speed immediately on load
+do local h=getHuman(); if h then h.WalkSpeed=walkSpeed end end
+
 LP.CharacterAdded:Connect(function(c)
     if RUN_GEN~=_G.AniPixels_RunGen then return end
     task.wait(1); local h=c:WaitForChild("Humanoid"); h.WalkSpeed=walkSpeed
