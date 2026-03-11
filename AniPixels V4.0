@@ -1031,7 +1031,6 @@ local FPillBtn=Instance.new("TextButton",FPill)
 FPillBtn.Size=UDim2.new(1,0,1,0); FPillBtn.BackgroundTransparency=1; FPillBtn.Text=""; FPillBtn.ZIndex=3
 FPillBtn.MouseButton1Click:Connect(function() setFarm(not states.farmActive) end)
 
-end
 
 -- Team preset cards label
 local TeamSectionFrame=Instance.new("Frame",PFarm)
