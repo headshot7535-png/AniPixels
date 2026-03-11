@@ -3038,34 +3038,62 @@ OnlineLbl.Text="🟡 Connecting..."
 
 -- send function
 local function sendChatMsg(text)
-    if text=="" then return end
+    if text == "" then return end
     local body = "Anonymous | "..shortServer().." | "..text
-    pcall(function()
-        httpRequest({
-            Url    = "https://ntfy.sh/"..CHAT_TOPIC,
-            Method = "POST",
-            Headers= {
-                ["Content-Type"]="text/plain",
-                ["X-Title"]=LP.Name,
-                ["X-Tags"]="speech_balloon",
-            },
-            Body   = body,
-        })
-    end)
+    local ok, res = pcall(httpRequest, {
+        Url    = "https://ntfy.sh/"..CHAT_TOPIC,
+        Method = "POST",
+        Headers= {
+            ["Content-Type"] = "text/plain",
+            ["X-Title"]      = "AniPixels",
+        },
+        Body   = body,
+    })
+    if not ok or not res then
+        addChatLine(nil, "❌ Send failed — HTTP not available", nil, true)
+    elseif res.StatusCode and res.StatusCode >= 400 then
+        addChatLine(nil, "❌ Send failed — status "..tostring(res.StatusCode), nil, true)
+    end
+    -- note: success means ntfy got it, WS will echo it back to us automatically
 end
 
 SendBtn.MouseButton1Click:Connect(function()
     local txt = ChatInput.Text:match("^%s*(.-)%s*$")
-    if txt=="" then return end
+    if txt == "" then return end
     sendChatMsg(txt)
-    ChatInput.Text=""
+    ChatInput.Text = ""
 end)
 
 ChatInput.FocusLost:Connect(function(enter)
     if enter then
         local txt = ChatInput.Text:match("^%s*(.-)%s*$")
-        if txt~="" then sendChatMsg(txt); ChatInput.Text="" end
+        if txt ~= "" then sendChatMsg(txt); ChatInput.Text = "" end
     end
+end)
+
+-- Test button: sends a ping stamped with full server job ID
+local TestCard = Instance.new("Frame", PChat)
+TestCard.Size = UDim2.new(1,-10,0,28); TestCard.BackgroundTransparency = 1
+TestCard.LayoutOrder = 6
+
+local TestBtn = Instance.new("TextButton", TestCard)
+TestBtn.Size = UDim2.new(0.5,-4,1,0); TestBtn.Position = UDim2.new(0,0,0,0)
+TestBtn.BackgroundColor3 = Color3.fromRGB(40,40,60); TestBtn.BorderSizePixel = 0
+TestBtn.TextColor3 = C.sub; TestBtn.Font = Enum.Font.Gotham; TestBtn.TextSize = 9
+TestBtn.Text = "🔁 Send Test Ping"
+Instance.new("UICorner", TestBtn).CornerRadius = UDim.new(0,6)
+
+local ServerLbl = Instance.new("TextLabel", TestCard)
+ServerLbl.Size = UDim2.new(0.5,-4,1,0); ServerLbl.Position = UDim2.new(0.5,4,0,0)
+ServerLbl.BackgroundTransparency = 1; ServerLbl.TextColor3 = C.sub
+ServerLbl.Font = Enum.Font.Code; ServerLbl.TextSize = 8; ServerLbl.TextWrapped = true
+ServerLbl.TextXAlignment = Enum.TextXAlignment.Left
+ServerLbl.Text = "Server: "..(game.JobId ~= "" and game.JobId:sub(1,12).."..." or "Studio")
+
+TestBtn.MouseButton1Click:Connect(function()
+    local jobId = game.JobId ~= "" and game.JobId:sub(1,8) or "studio"
+    sendChatMsg("📡 ping from server ["..jobId.."]")
+    addChatLine(nil, "Test ping sent", nil, true)
 end)
 
 -- WebSocket connection loop (auto-reconnects on drop)
