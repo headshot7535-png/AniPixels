@@ -2999,7 +2999,7 @@ local function addChatLine(user, text, server, isSystem)
 
     -- auto-scroll to bottom
     task.defer(function()
-        FeedScroll.CanvasPosition=Vector2.new(0, math.huge)
+        FeedScroll.CanvasPosition = Vector2.new(0, FeedLayout.AbsoluteContentSize.Y)
     end)
 end
 
@@ -3069,31 +3069,6 @@ ChatInput.FocusLost:Connect(function(enter)
         local txt = ChatInput.Text:match("^%s*(.-)%s*$")
         if txt ~= "" then sendChatMsg(txt); ChatInput.Text = "" end
     end
-end)
-
--- Test button: sends a ping stamped with full server job ID
-local TestCard = Instance.new("Frame", PChat)
-TestCard.Size = UDim2.new(1,-10,0,28); TestCard.BackgroundTransparency = 1
-TestCard.LayoutOrder = 6
-
-local TestBtn = Instance.new("TextButton", TestCard)
-TestBtn.Size = UDim2.new(0.5,-4,1,0); TestBtn.Position = UDim2.new(0,0,0,0)
-TestBtn.BackgroundColor3 = Color3.fromRGB(40,40,60); TestBtn.BorderSizePixel = 0
-TestBtn.TextColor3 = C.sub; TestBtn.Font = Enum.Font.Gotham; TestBtn.TextSize = 9
-TestBtn.Text = "🔁 Send Test Ping"
-Instance.new("UICorner", TestBtn).CornerRadius = UDim.new(0,6)
-
-local ServerLbl = Instance.new("TextLabel", TestCard)
-ServerLbl.Size = UDim2.new(0.5,-4,1,0); ServerLbl.Position = UDim2.new(0.5,4,0,0)
-ServerLbl.BackgroundTransparency = 1; ServerLbl.TextColor3 = C.sub
-ServerLbl.Font = Enum.Font.Code; ServerLbl.TextSize = 8; ServerLbl.TextWrapped = true
-ServerLbl.TextXAlignment = Enum.TextXAlignment.Left
-ServerLbl.Text = "Server: "..(game.JobId ~= "" and game.JobId:sub(1,12).."..." or "Studio")
-
-TestBtn.MouseButton1Click:Connect(function()
-    local jobId = game.JobId ~= "" and game.JobId:sub(1,8) or "studio"
-    sendChatMsg("📡 ping from server ["..jobId.."]")
-    addChatLine(nil, "Test ping sent", nil, true)
 end)
 
 -- WebSocket connection loop (auto-reconnects on drop)
