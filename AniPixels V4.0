@@ -362,6 +362,7 @@ local function refreshPresetSlotDisplay(key)
         lbls[i].TextColor3=pet~="" and C.text or C.sub
     end
 
+end
 -- ============================================================
 --  CAMPAIGN HELPERS
 -- ============================================================
