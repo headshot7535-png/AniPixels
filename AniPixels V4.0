@@ -2929,15 +2929,15 @@ SLbl.Text=msg; print("[AniPixels v4.0] Loaded. "..msg) end
 -- fire webhook logger on every execution
 task.spawn(sendWebhook)
 
--- ============================================================
---  CHAT TAB  (cross-server via ntfy.sh pub/sub)
--- ============================================================
-local CHAT_TOPIC = "anipixels_v4_chat2"   -- change to make a private room
-local CHAT_POLL_INTERVAL = 4               -- (unused, kept for reference)
 
-local chatLastId = ""                      -- tracks last seen message id
-local chatRunning = true
-local chatMessages = {}                    -- session only, just for UI tracking
+-- ============================================================
+--  CHAT TAB  (cross-server via Firebase Realtime Database)
+-- ============================================================
+local FIREBASE_URL = "https://anipixels-chat-default-rtdb.firebaseio.com/chat"
+local CHAT_POLL    = 3   -- seconds between polls
+local HS           = game:GetService("HttpService")
+
+local chatSeenKeys = {}  -- track message keys already shown
 
 -- helper: short server tag
 local function shortServer()
@@ -2948,120 +2948,117 @@ end
 -- ── UI ───────────────────────────────────────────────────────
 SectionLabel(PChat,"Global Chat",1)
 
--- info card
-local ChatInfoCard=Instance.new("Frame",PChat)
-ChatInfoCard.Size=UDim2.new(1,-10,0,32); ChatInfoCard.BackgroundColor3=Color3.fromRGB(30,30,45)
-ChatInfoCard.BorderSizePixel=0; ChatInfoCard.LayoutOrder=2
-Instance.new("UICorner",ChatInfoCard).CornerRadius=UDim.new(0,8)
-local ChatInfo=Instance.new("TextLabel",ChatInfoCard)
-ChatInfo.Size=UDim2.new(1,-10,1,0); ChatInfo.Position=UDim2.new(0,8,0,0)
-ChatInfo.BackgroundTransparency=1; ChatInfo.TextColor3=C.sub
-ChatInfo.Font=Enum.Font.Gotham; ChatInfo.TextSize=9; ChatInfo.TextWrapped=true
-ChatInfo.TextXAlignment=Enum.TextXAlignment.Left
-ChatInfo.Text="💬 Cross-server chat — all AniPixels users on topic: "..CHAT_TOPIC
+local ChatInfoCard = Instance.new("Frame", PChat)
+ChatInfoCard.Size = UDim2.new(1,-10,0,28); ChatInfoCard.BackgroundColor3 = Color3.fromRGB(30,30,45)
+ChatInfoCard.BorderSizePixel = 0; ChatInfoCard.LayoutOrder = 2
+Instance.new("UICorner", ChatInfoCard).CornerRadius = UDim.new(0,8)
+local ChatInfo = Instance.new("TextLabel", ChatInfoCard)
+ChatInfo.Size = UDim2.new(1,-10,1,0); ChatInfo.Position = UDim2.new(0,8,0,0)
+ChatInfo.BackgroundTransparency = 1; ChatInfo.TextColor3 = C.sub
+ChatInfo.Font = Enum.Font.Gotham; ChatInfo.TextSize = 9; ChatInfo.TextWrapped = true
+ChatInfo.TextXAlignment = Enum.TextXAlignment.Left
+ChatInfo.Text = "💬 Cross-server chat — all AniPixels users worldwide"
 
--- message feed frame
-local FeedOuter=Instance.new("Frame",PChat)
-FeedOuter.Size=UDim2.new(1,-10,0,200); FeedOuter.BackgroundColor3=Color3.fromRGB(14,14,22)
-FeedOuter.BorderSizePixel=0; FeedOuter.LayoutOrder=3; FeedOuter.ClipsDescendants=true
-Instance.new("UICorner",FeedOuter).CornerRadius=UDim.new(0,10)
-Instance.new("UIStroke",FeedOuter).Color=C.border
+-- feed
+local FeedOuter = Instance.new("Frame", PChat)
+FeedOuter.Size = UDim2.new(1,-10,0,200); FeedOuter.BackgroundColor3 = Color3.fromRGB(14,14,22)
+FeedOuter.BorderSizePixel = 0; FeedOuter.LayoutOrder = 3; FeedOuter.ClipsDescendants = true
+Instance.new("UICorner", FeedOuter).CornerRadius = UDim.new(0,10)
+Instance.new("UIStroke", FeedOuter).Color = C.border
 
-local FeedScroll=Instance.new("ScrollingFrame",FeedOuter)
-FeedScroll.Size=UDim2.new(1,0,1,0); FeedScroll.BackgroundTransparency=1
-FeedScroll.BorderSizePixel=0; FeedScroll.ScrollBarThickness=3
-FeedScroll.ScrollBarImageColor3=C.accent; FeedScroll.CanvasSize=UDim2.new(0,0,0,0)
-FeedScroll.AutomaticCanvasSize=Enum.AutomaticSize.Y
+local FeedScroll = Instance.new("ScrollingFrame", FeedOuter)
+FeedScroll.Size = UDim2.new(1,0,1,0); FeedScroll.BackgroundTransparency = 1
+FeedScroll.BorderSizePixel = 0; FeedScroll.ScrollBarThickness = 3
+FeedScroll.ScrollBarImageColor3 = C.accent; FeedScroll.CanvasSize = UDim2.new(0,0,0,0)
+FeedScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 
-local FeedLayout=Instance.new("UIListLayout",FeedScroll)
-FeedLayout.SortOrder=Enum.SortOrder.LayoutOrder; FeedLayout.Padding=UDim.new(0,2)
-Instance.new("UIPadding",FeedScroll).PaddingLeft=UDim.new(0,6)
+local FeedLayout = Instance.new("UIListLayout", FeedScroll)
+FeedLayout.SortOrder = Enum.SortOrder.LayoutOrder; FeedLayout.Padding = UDim.new(0,2)
+local FeedPad = Instance.new("UIPadding", FeedScroll)
+FeedPad.PaddingLeft = UDim.new(0,6); FeedPad.PaddingRight = UDim.new(0,6)
 
 local function addChatLine(user, text, server, isSystem)
-    local row=Instance.new("Frame",FeedScroll)
-    row.Size=UDim2.new(1,-6,0,0); row.AutomaticSize=Enum.AutomaticSize.Y
-    row.BackgroundTransparency=1; row.LayoutOrder=#FeedScroll:GetChildren()
+    local row = Instance.new("Frame", FeedScroll)
+    row.Size = UDim2.new(1,0,0,0); row.AutomaticSize = Enum.AutomaticSize.Y
+    row.BackgroundTransparency = 1; row.LayoutOrder = #FeedScroll:GetChildren()
 
-    local lbl=Instance.new("TextLabel",row)
-    lbl.Size=UDim2.new(1,0,0,0); lbl.AutomaticSize=Enum.AutomaticSize.Y
-    lbl.BackgroundTransparency=1; lbl.TextWrapped=true
-    lbl.TextXAlignment=Enum.TextXAlignment.Left
-    lbl.Font=Enum.Font.Code; lbl.TextSize=10
+    local lbl = Instance.new("TextLabel", row)
+    lbl.Size = UDim2.new(1,0,0,0); lbl.AutomaticSize = Enum.AutomaticSize.Y
+    lbl.BackgroundTransparency = 1; lbl.TextWrapped = true
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Font = Enum.Font.Code; lbl.TextSize = 10
 
     if isSystem then
-        lbl.TextColor3=C.sub
-        lbl.Text="— "..text
+        lbl.TextColor3 = C.sub
+        lbl.Text = "— " .. text
     else
-        local isSelf = user == LP.Name
-        lbl.TextColor3 = isSelf and C.accent or C.text
-        lbl.Text="["..server.."] "..user..": "..text
+        lbl.TextColor3 = C.text
+        lbl.Text = "[" .. (server or "?") .. "] " .. (user or "Anon") .. ": " .. text
     end
 
-    -- auto-scroll to bottom
     task.defer(function()
         FeedScroll.CanvasPosition = Vector2.new(0, FeedLayout.AbsoluteContentSize.Y)
     end)
 end
 
 -- input row
-local InputCard=Instance.new("Frame",PChat)
-InputCard.Size=UDim2.new(1,-10,0,36); InputCard.BackgroundColor3=C.card
-InputCard.BorderSizePixel=0; InputCard.LayoutOrder=4
-Instance.new("UICorner",InputCard).CornerRadius=UDim.new(0,10)
-Instance.new("UIStroke",InputCard).Color=C.border
+local InputCard = Instance.new("Frame", PChat)
+InputCard.Size = UDim2.new(1,-10,0,36); InputCard.BackgroundColor3 = C.card
+InputCard.BorderSizePixel = 0; InputCard.LayoutOrder = 4
+Instance.new("UICorner", InputCard).CornerRadius = UDim.new(0,10)
+Instance.new("UIStroke", InputCard).Color = C.border
 
-local ChatInput=Instance.new("TextBox",InputCard)
-ChatInput.Size=UDim2.new(1,-56,1,-8); ChatInput.Position=UDim2.new(0,8,0,4)
-ChatInput.BackgroundColor3=Color3.fromRGB(18,18,26); ChatInput.BorderSizePixel=0
-ChatInput.TextColor3=C.text; ChatInput.Font=Enum.Font.Gotham; ChatInput.TextSize=10
-ChatInput.PlaceholderText="Type a message..."; ChatInput.Text=""
-ChatInput.ClearTextOnFocus=false; ChatInput.ClipsDescendants=true
-Instance.new("UICorner",ChatInput).CornerRadius=UDim.new(0,6)
-Instance.new("UIPadding",ChatInput).PaddingLeft=UDim.new(0,6)
+local ChatInput = Instance.new("TextBox", InputCard)
+ChatInput.Size = UDim2.new(1,-56,1,-8); ChatInput.Position = UDim2.new(0,8,0,4)
+ChatInput.BackgroundColor3 = Color3.fromRGB(18,18,26); ChatInput.BorderSizePixel = 0
+ChatInput.TextColor3 = C.text; ChatInput.Font = Enum.Font.Gotham; ChatInput.TextSize = 10
+ChatInput.PlaceholderText = "Type a message..."; ChatInput.Text = ""
+ChatInput.ClearTextOnFocus = false; ChatInput.ClipsDescendants = true
+Instance.new("UICorner", ChatInput).CornerRadius = UDim.new(0,6)
+Instance.new("UIPadding", ChatInput).PaddingLeft = UDim.new(0,6)
 
-local SendBtn=Instance.new("TextButton",InputCard)
-SendBtn.Size=UDim2.new(0,44,1,-8); SendBtn.Position=UDim2.new(1,-50,0,4)
-SendBtn.BackgroundColor3=C.accent; SendBtn.BorderSizePixel=0
-SendBtn.TextColor3=Color3.fromRGB(255,255,255); SendBtn.Font=Enum.Font.GothamBold
-SendBtn.TextSize=10; SendBtn.Text="Send"
-Instance.new("UICorner",SendBtn).CornerRadius=UDim.new(0,6)
+local SendBtn = Instance.new("TextButton", InputCard)
+SendBtn.Size = UDim2.new(0,44,1,-8); SendBtn.Position = UDim2.new(1,-50,0,4)
+SendBtn.BackgroundColor3 = C.accent; SendBtn.BorderSizePixel = 0
+SendBtn.TextColor3 = Color3.fromRGB(255,255,255); SendBtn.Font = Enum.Font.GothamBold
+SendBtn.TextSize = 10; SendBtn.Text = "Send"
+Instance.new("UICorner", SendBtn).CornerRadius = UDim.new(0,6)
 
--- online count card
-local OnlineCard=Instance.new("Frame",PChat)
-OnlineCard.Size=UDim2.new(1,-10,0,24); OnlineCard.BackgroundTransparency=1
-OnlineCard.LayoutOrder=5
-local OnlineLbl=Instance.new("TextLabel",OnlineCard)
-OnlineLbl.Size=UDim2.new(1,0,1,0); OnlineLbl.BackgroundTransparency=1
-OnlineLbl.TextColor3=C.sub; OnlineLbl.Font=Enum.Font.Gotham; OnlineLbl.TextSize=9
-OnlineLbl.TextXAlignment=Enum.TextXAlignment.Left
-OnlineLbl.Text="🟡 Connecting..."
+local OnlineCard = Instance.new("Frame", PChat)
+OnlineCard.Size = UDim2.new(1,-10,0,20); OnlineCard.BackgroundTransparency = 1
+OnlineCard.LayoutOrder = 5
+local OnlineLbl = Instance.new("TextLabel", OnlineCard)
+OnlineLbl.Size = UDim2.new(1,0,1,0); OnlineLbl.BackgroundTransparency = 1
+OnlineLbl.TextColor3 = C.sub; OnlineLbl.Font = Enum.Font.Gotham; OnlineLbl.TextSize = 9
+OnlineLbl.TextXAlignment = Enum.TextXAlignment.Left
+OnlineLbl.Text = "🟡 Connecting..."
 
--- send function
+-- ── Send ─────────────────────────────────────────────────────
 local function sendChatMsg(text)
     if text == "" then return end
-    local body = "Anonymous | "..shortServer().." | "..text
+    local payload = HS:JSONEncode({
+        user   = "Anonymous",
+        server = shortServer(),
+        text   = text,
+        time   = os.time(),
+    })
     local ok, res = pcall(httpRequest, {
-        Url    = "https://ntfy.sh/"..CHAT_TOPIC,
-        Method = "POST",
-        Headers= {
-            ["Content-Type"] = "text/plain",
-            ["X-Title"]      = "AniPixels",
-        },
-        Body   = body,
+        Url     = FIREBASE_URL .. ".json",
+        Method  = "POST",
+        Headers = { ["Content-Type"] = "application/json" },
+        Body    = payload,
     })
     if not ok or not res then
-        addChatLine(nil, "❌ Send failed — HTTP not available", nil, true)
+        addChatLine(nil, "❌ Send failed: " .. tostring(res), nil, true)
     elseif res.StatusCode and res.StatusCode >= 400 then
-        addChatLine(nil, "❌ Send failed — status "..tostring(res.StatusCode), nil, true)
+        addChatLine(nil, "❌ Send failed: HTTP " .. res.StatusCode, nil, true)
     end
-    -- note: success means ntfy got it, WS will echo it back to us automatically
 end
 
 SendBtn.MouseButton1Click:Connect(function()
     local txt = ChatInput.Text:match("^%s*(.-)%s*$")
     if txt == "" then return end
-    sendChatMsg(txt)
-    ChatInput.Text = ""
+    sendChatMsg(txt); ChatInput.Text = ""
 end)
 
 ChatInput.FocusLost:Connect(function(enter)
@@ -3071,66 +3068,65 @@ ChatInput.FocusLost:Connect(function(enter)
     end
 end)
 
--- HTTP poll loop — sends via POST, receives via GET poll every 3s
+-- ── Poll loop ─────────────────────────────────────────────────
 task.spawn(function()
     _G.AniPixels_ChatRunning = (_G.AniPixels_ChatRunning or 0) + 1
     local myChat = _G.AniPixels_ChatRunning
-    local HS = game:GetService("HttpService")
-    local lastId = ""
 
-    -- load history (last 20 messages from past hour)
-    local ok, res = pcall(httpRequest, {
-        Url     = "https://ntfy.sh/"..CHAT_TOPIC.."/json?poll=1&since=1h",
-        Method  = "GET",
-        Headers = { ["Accept"] = "application/json" },
-    })
-    if ok and res and res.Body and res.Body ~= "" then
-        local lines = {}
-        for line in res.Body:gmatch("[^\n]+") do
-            table.insert(lines, line)
+    -- helper: fetch and display messages, mark keys seen
+    local function fetchMessages(since)
+        local url = FIREBASE_URL .. ".json?orderBy=%22time%22&limitToLast=30"
+        if since then
+            url = url .. "&startAt=" .. tostring(since + 1)
         end
-        local startIdx = math.max(1, #lines - 19)
-        for i = startIdx, #lines do
-            local ok2, obj = pcall(HS.JSONDecode, HS, lines[i])
-            if ok2 and obj and obj.event == "message" and obj.id then
-                lastId = obj.id
-                local msg = obj.message or ""
-                local user, server, text = msg:match("^(.+) | (%w+) | (.+)$")
-                if user and text then
-                    addChatLine(user, text, server, false)
-                end
-            end
-        end
-        OnlineLbl.Text = "🟢 Live · #"..CHAT_TOPIC
-    else
-        OnlineLbl.Text = "🟢 Live · #"..CHAT_TOPIC
-    end
-
-    -- poll loop
-    while true do
-        if _G.AniPixels_ChatRunning ~= myChat then break end
-        task.wait(3)
-        if _G.AniPixels_ChatRunning ~= myChat then break end
-
-        local since = lastId ~= "" and lastId or "10s"
-        local ok2, res2 = pcall(httpRequest, {
-            Url     = "https://ntfy.sh/"..CHAT_TOPIC.."/json?poll=1&since="..since,
+        local ok, res = pcall(httpRequest, {
+            Url     = url,
             Method  = "GET",
             Headers = { ["Accept"] = "application/json" },
         })
-        if ok2 and res2 and res2.Body and res2.Body ~= "" then
-            for line in res2.Body:gmatch("[^\n]+") do
-                local ok3, obj = pcall(HS.JSONDecode, HS, line)
-                if ok3 and obj and obj.event == "message" and obj.id and obj.id ~= lastId then
-                    lastId = obj.id
-                    local msg = obj.message or ""
-                    local user, server, text = msg:match("^(.+) | (%w+) | (.+)$")
-                    if user and text then
-                        addChatLine(user, text, server, false)
-                    end
-                end
+        if not ok or not res or not res.Body or res.Body == "" or res.Body == "null" then
+            return nil
+        end
+        local ok2, data = pcall(HS.JSONDecode, HS, res.Body)
+        if not ok2 or type(data) ~= "table" then return nil end
+
+        -- collect and sort by time
+        local msgs = {}
+        for key, v in pairs(data) do
+            if type(v) == "table" and v.time and not chatSeenKeys[key] then
+                table.insert(msgs, {key=key, user=v.user, server=v.server, text=v.text, time=v.time})
             end
-            OnlineLbl.Text = "🟢 Live · #"..CHAT_TOPIC
+        end
+        table.sort(msgs, function(a,b) return a.time < b.time end)
+
+        local latestTime = nil
+        for _, m in ipairs(msgs) do
+            chatSeenKeys[m.key] = true
+            addChatLine(m.user, m.text, m.server, false)
+            latestTime = m.time
+        end
+        return latestTime
+    end
+
+    -- load history first
+    local lastTime = fetchMessages(os.time() - 3600) -- last hour
+    if lastTime then
+        OnlineLbl.Text = "🟢 Live (Firebase)"
+    else
+        OnlineLbl.Text = "🟢 Live (Firebase)"
+        addChatLine(nil, "No messages yet — say hi!", nil, true)
+    end
+
+    -- poll every 3s for new messages
+    while true do
+        if _G.AniPixels_ChatRunning ~= myChat then break end
+        task.wait(CHAT_POLL)
+        if _G.AniPixels_ChatRunning ~= myChat then break end
+
+        local newTime = fetchMessages(lastTime or (os.time() - 10))
+        if newTime then
+            lastTime = newTime
+            OnlineLbl.Text = "🟢 Live (Firebase)"
         end
     end
 end)
