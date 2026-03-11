@@ -316,6 +316,54 @@ end)
 -- ============================================================
 local RequestBattle = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RequestBattle")
 
+-- ============================================================
+--  CAMPAIGN HELPERS
+-- ============================================================
+local function findCampaignModelForPet(petName)
+    local result=nil
+    pcall(function()
+        local campaign=workspace:WaitForChild("Campaign",5)
+        for _,model in pairs(campaign:GetChildren()) do
+            local pets=model:FindFirstChild("Pets")
+            if pets and pets:FindFirstChild(petName) then result=model; return end
+        end
+    end)
+    return result
+end
+
+local function findTrialsModel()
+    local result=nil
+    pcall(function()
+        local lc=workspace.LocalCoolers; if lc then result=lc:GetChildren()[1]; return end
+    end)
+    if result then return result end
+    pcall(function()
+        for _,child in ipairs(workspace:GetChildren()) do
+            if child:IsA("Folder") and child.Name~="Campaign" and child.Name~="Battles" and child.Name~="Effects" then
+                local model=child:GetChildren()[1]
+                if model and model:FindFirstChild("Pets") then result=model; return end
+            end
+        end
+    end)
+    return result
+end
+
+local function walkToCampaignAndBattle(folderName,petName)
+    local model=findCampaignModelForPet(petName or folderName); if not model then return false end
+    if not states.farmNoTP then
+        pcall(function()
+            local root=getRoot(); if not root then return end
+            local pos=model:GetModelCFrame().Position
+            if (root.Position-pos).Magnitude>30 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
+        end)
+    end
+    local ok=false; pcall(function() RequestBattle:FireServer(model); ok=true end)
+    return ok
+end
+
+task.spawn(function() task.wait(2); refreshPetCampaignMap() end)
+
+
 local function isBossPresent(p) local c=workspace:FindFirstChild("Campaign") return c and c:FindFirstChild(p)~=nil end
 local function isBossDead(p)
     local c=workspace:FindFirstChild("Campaign"); if not c then return false end
@@ -1255,52 +1303,6 @@ end
 DBLog=Instance.new("TextLabel",PDragon); DBLog.Size=UDim2.new(1,-10,0,20); DBLog.BackgroundTransparency=1; DBLog.LayoutOrder=3; DBLog.TextColor3=C.sub; DBLog.Font=Enum.Font.Code; DBLog.TextSize=9; DBLog.TextXAlignment=Enum.TextXAlignment.Left; DBLog.Text="  Waiting..."
 end -- dragon tab UI
 
--- ============================================================
---  CAMPAIGN HELPERS
--- ============================================================
-local function findCampaignModelForPet(petName)
-    local result=nil
-    pcall(function()
-        local campaign=workspace:WaitForChild("Campaign",5)
-        for _,model in pairs(campaign:GetChildren()) do
-            local pets=model:FindFirstChild("Pets")
-            if pets and pets:FindFirstChild(petName) then result=model; return end
-        end
-    end)
-    return result
-end
-
-local function findTrialsModel()
-    local result=nil
-    pcall(function()
-        local lc=workspace.LocalCoolers; if lc then result=lc:GetChildren()[1]; return end
-    end)
-    if result then return result end
-    pcall(function()
-        for _,child in ipairs(workspace:GetChildren()) do
-            if child:IsA("Folder") and child.Name~="Campaign" and child.Name~="Battles" and child.Name~="Effects" then
-                local model=child:GetChildren()[1]
-                if model and model:FindFirstChild("Pets") then result=model; return end
-            end
-        end
-    end)
-    return result
-end
-
-local function walkToCampaignAndBattle(folderName,petName)
-    local model=findCampaignModelForPet(petName or folderName); if not model then return false end
-    if not states.farmNoTP then
-        pcall(function()
-            local root=getRoot(); if not root then return end
-            local pos=model:GetModelCFrame().Position
-            if (root.Position-pos).Magnitude>30 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
-        end)
-    end
-    local ok=false; pcall(function() RequestBattle:FireServer(model); ok=true end)
-    return ok
-end
-
-task.spawn(function() task.wait(2); refreshPetCampaignMap() end)
 
 -- ============================================================
 --  WEBHOOK
