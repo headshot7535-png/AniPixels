@@ -3074,21 +3074,17 @@ task.spawn(function()
     local myChat = _G.AniPixels_ChatRunning
 
     -- helper: fetch and display messages, mark keys seen
-    local function fetchMessages(since)
-        local url = FIREBASE_URL .. ".json?orderBy=%22time%22&limitToLast=30"
-        if since then
-            url = url .. "&startAt=" .. tostring(since + 1)
-        end
+    local function fetchMessages()
         local ok, res = pcall(httpRequest, {
-            Url     = url,
+            Url     = FIREBASE_URL .. ".json",
             Method  = "GET",
             Headers = { ["Accept"] = "application/json" },
         })
         if not ok or not res or not res.Body or res.Body == "" or res.Body == "null" then
-            return nil
+            return false
         end
         local ok2, data = pcall(HS.JSONDecode, HS, res.Body)
-        if not ok2 or type(data) ~= "table" then return nil end
+        if not ok2 or type(data) ~= "table" then return false end
 
         -- collect and sort by time
         local msgs = {}
@@ -3099,21 +3095,20 @@ task.spawn(function()
         end
         table.sort(msgs, function(a,b) return a.time < b.time end)
 
-        local latestTime = nil
-        for _, m in ipairs(msgs) do
+        -- only show last 30 on first load
+        local start = math.max(1, #msgs - 29)
+        for i = start, #msgs do
+            local m = msgs[i]
             chatSeenKeys[m.key] = true
             addChatLine(m.user, m.text, m.server, false)
-            latestTime = m.time
         end
-        return latestTime
+        return #msgs > 0
     end
 
     -- load history first
-    local lastTime = fetchMessages(os.time() - 3600) -- last hour
-    if lastTime then
-        OnlineLbl.Text = "🟢 Live (Firebase)"
-    else
-        OnlineLbl.Text = "🟢 Live (Firebase)"
+    local hadMessages = fetchMessages()
+    OnlineLbl.Text = "🟢 Live (Firebase)"
+    if not hadMessages then
         addChatLine(nil, "No messages yet — say hi!", nil, true)
     end
 
@@ -3122,11 +3117,6 @@ task.spawn(function()
         if _G.AniPixels_ChatRunning ~= myChat then break end
         task.wait(CHAT_POLL)
         if _G.AniPixels_ChatRunning ~= myChat then break end
-
-        local newTime = fetchMessages(lastTime or (os.time() - 10))
-        if newTime then
-            lastTime = newTime
-            OnlineLbl.Text = "🟢 Live (Firebase)"
-        end
+        fetchMessages()
     end
 end)
