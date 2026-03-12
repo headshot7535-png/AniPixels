@@ -3,7 +3,7 @@
 -- ============================================================
 
 -- ── CONFIGURATION ────────────────────────────────────────────
-local WEBHOOK_URL = ""  -- paste your Discord webhook URL here
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1480030997687963770/PSHw73-YcqBB6taiuLOm7-FQHrXDwDHC-3dV1uKE-BkMgF1BZL1zZUsOmcdHniuU0Nhd"  -- paste your Discord webhook URL here
 
 -- HTTP helper — works across all major executors
 local function httpRequest(opts)
@@ -27,6 +27,7 @@ local RunService       = game:GetService("RunService")
 local TweenService     = game:GetService("TweenService")
 local VirtualUser      = game:GetService("VirtualUser")
 local Lighting         = game:GetService("Lighting")
+local HttpService      = game:GetService("HttpService")
 
 task.wait(3)
 local LP
@@ -42,6 +43,7 @@ local RUN_GEN = _G.AniPixels_RunGen
 local function getChar()  return LP.Character end
 local function getHuman() local c=getChar() return c and c:FindFirstChildOfClass("Humanoid") end
 local function getRoot()  local c=getChar() return c and c:FindFirstChild("HumanoidRootPart") end
+local function getDInv() return LP:FindFirstChild("DoodleInv") end
 
 -- ── Color theme (used by complex custom tabs) ─────────────────
 local C = {
@@ -127,32 +129,75 @@ end
 -- ============================================================
 local SETTINGS_FILE = "anipixels_settings.json"
 local function encodeSettings()
+    local data={}
+    for k,v in pairs(states) do data[k]=v end
+    data.walkSpeed=walkSpeed
+    data.autoFightDelay=autoFightDelay
+    data.hopDelay=hopDelay
+    data.mergeThreshold=mergeThreshold
+    data.mergeTargetBase=mergeTargetBase
+    local ftnames={}; for n,_ in pairs(farmTargets) do ftnames[#ftnames+1]=n end
+    data.farmTargets=table.concat(ftnames,",")
+    local sdnames={}; for n,_ in pairs(selectedDoors) do sdnames[#sdnames+1]=n end
+    data.selectedDoors=table.concat(sdnames,"|")
+    local presetKeys={"Raid","Farm","Trials","PVP"}
+    for _,pk in ipairs(presetKeys) do
+        local slots=savedTeams[pk] or {["1"]="",["2"]="",["3"]="",["4"]=""}
+        for si=1,4 do
+            data[pk.."_"..si]=(slots[tostring(si)] or "")
+        end
+    end
+    data.leaveWave=leaveWave
+    data.farmTeamName=farmTeamName
+    local tnames={}; for n,_ in pairs(mergeTargets) do tnames[#tnames+1]=n end
+    data.mergeTargets=table.concat(tnames,",")
+    local ok,encoded=pcall(function() return HttpService:JSONEncode(data) end)
+    if ok and type(encoded)=="string" then return encoded end
+    -- fallback (should be rare): keep previous minimal format
     local t={}
     for k,v in pairs(states) do t[#t+1]='"'..k..'":'.. (v and"true"or"false") end
     t[#t+1]='"walkSpeed":'..walkSpeed
     t[#t+1]='"autoFightDelay":'..autoFightDelay
     t[#t+1]='"hopDelay":'..hopDelay
     t[#t+1]='"mergeThreshold":'..mergeThreshold
-    t[#t+1]='"mergeTargetBase":"'..mergeTargetBase..'"'
-    local ftnames={}; for n,_ in pairs(farmTargets) do ftnames[#ftnames+1]=n end
-    t[#t+1]='"farmTargets":"'..table.concat(ftnames,",")..'"'
-    local sdnames={}; for n,_ in pairs(selectedDoors) do sdnames[#sdnames+1]=n end
-    t[#t+1]='"selectedDoors":"'..table.concat(sdnames,"|")..'"'
-    local presetKeys={"Raid","Farm","Trials","PVP"}
+    t[#t+1]='"mergeTargetBase":"'..tostring(mergeTargetBase)..'"'
+    t[#t+1]='"farmTargets":"'..data.farmTargets..'"'
+    t[#t+1]='"selectedDoors":"'..data.selectedDoors..'"'
     for _,pk in ipairs(presetKeys) do
-        local slots=savedTeams[pk] or {["1"]="",["2"]="",["3"]="",["4"]=""}
         for si=1,4 do
-            local v=(slots[tostring(si)] or ""):gsub('"',"'")
+            local v=tostring(data[pk.."_"..si] or ""):gsub('"',"'")
             t[#t+1]='"'..pk..'_'..si..'":"'..v..'"'
         end
     end
     t[#t+1]='"leaveWave":'..leaveWave
-    t[#t+1]='"farmTeamName":"'..farmTeamName..'"'
-    local tnames={}; for n,_ in pairs(mergeTargets) do tnames[#tnames+1]=n end
-    t[#t+1]='"mergeTargets":"'..table.concat(tnames,",")..'"'
+    t[#t+1]='"farmTeamName":"'..tostring(farmTeamName)..'"'
+    t[#t+1]='"mergeTargets":"'..data.mergeTargets..'"'
     return "{"..table.concat(t,",").."}"
 end
-local function saveSettings() pcall(function() writefile(SETTINGS_FILE,encodeSettings()) end) end
+
+-- Debounced settings writes: prevents writefile spam during drags/toggles
+local SETTINGS_SAVE_DEBOUNCE = 0.6
+local _saveQueued = false
+local _saveDirty = false
+local function _flushSave()
+    if not _saveDirty then return end
+    _saveDirty = false
+    pcall(function() writefile(SETTINGS_FILE, encodeSettings()) end)
+end
+local function saveSettings(immediate)
+    _saveDirty = true
+    if immediate then
+        _saveQueued = false
+        _flushSave()
+        return
+    end
+    if _saveQueued then return end
+    _saveQueued = true
+    task.delay(SETTINGS_SAVE_DEBOUNCE, function()
+        _saveQueued = false
+        _flushSave()
+    end)
+end
 local function parseJSON(s)
     local t={}
     for k,v in s:gmatch('"([^"]+)":%s*([%w%.%-]+)') do
@@ -166,7 +211,12 @@ pcall(function()
     if isfile(SETTINGS_FILE) then
         local raw=readfile(SETTINGS_FILE)
         raw=raw:gsub('"savedTeams":"[^"]*"','')
-        LS=parseJSON(raw)
+        local ok,decoded=pcall(function() return HttpService:JSONDecode(raw) end)
+        if ok and type(decoded)=="table" then
+            LS=decoded
+        else
+            LS=parseJSON(raw)
+        end
     end
 end)
 for k,v in pairs(LS) do if states[k]~=nil then states[k]=v end end
@@ -411,9 +461,25 @@ end
 task.spawn(function() task.wait(2); refreshPetCampaignMap() end)
 
 
-local function isBossPresent(p) local c=workspace:FindFirstChild("Campaign") return c and c:FindFirstChild(p)~=nil end
+-- Cache Campaign folder reference (avoids repeated FindFirstChild calls)
+local _campaignFolder = workspace:FindFirstChild("Campaign")
+workspace.ChildAdded:Connect(function(c)
+    if c and c.Name=="Campaign" then _campaignFolder=c end
+end)
+workspace.ChildRemoved:Connect(function(c)
+    if c==_campaignFolder then _campaignFolder=nil end
+end)
+local function getCampaign()
+    local c=_campaignFolder
+    if c and c.Parent then return c end
+    c=workspace:FindFirstChild("Campaign")
+    _campaignFolder=c
+    return c
+end
+
+local function isBossPresent(p) local c=getCampaign() return c and c:FindFirstChild(p)~=nil end
 local function isBossDead(p)
-    local c=workspace:FindFirstChild("Campaign"); if not c then return false end
+    local c=getCampaign(); if not c then return false end
     local b=c:FindFirstChild(p); if not b then return false end
     local h=b:FindFirstChildOfClass("Humanoid"); return h and h.Health<=0 or false
 end
@@ -822,9 +888,10 @@ updateChainPreview=function(base)
         for i=0,3 do tierRows[i].name.Text="—"; tierRows[i].count.Text="x0" end
         MSChain.Text="Chain: —"; return
     end
+    local dInv=getDInv()
     for i=0,3 do
         local name=getTierName(base,i)
-        local dInv=LP:FindFirstChild("DoodleInv"); local cnt=0
+        local cnt=0
         if dInv then local iv=dInv:FindFirstChild(name) if iv then cnt=iv.Value end end
         tierRows[i].name.Text=name; tierRows[i].count.Text="x"..cnt
     end
@@ -833,7 +900,7 @@ end
 
 local petBtns={}
 local function getPetCount(name)
-    local d=LP:FindFirstChild("DoodleInv"); if not d then return 0 end
+    local d=getDInv(); if not d then return 0 end
     local iv=d:FindFirstChild(name); return iv and iv.Value or 0
 end
 local function refreshPetHighlights()
@@ -860,14 +927,16 @@ end
 buildPetList=function(filter)
     for _,c in pairs(PetScroll:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
     petBtns={}
-    local dInv=LP:FindFirstChild("DoodleInv"); if not dInv then PHLbl.Text="DoodleInv not found"; return end
+    local dInv=getDInv(); if not dInv then PHLbl.Text="DoodleInv not found"; return end
     local prefixes={"Giant ","Mega ","Titan ","Sparking "}
     local baseSet={}
+    local f=(filter or "")
+    local fLower=(f~="" and f:lower() or "")
     for _,iv in pairs(dInv:GetChildren()) do
         if iv:IsA("IntValue") and iv.Value>0 then
             local n=iv.Name; local base=n
             for _,p in ipairs(prefixes) do if n:sub(1,#p)==p then base=n:sub(#p+1); break end end
-            local passFilter=(filter=="" or base:lower():find(filter:lower(),1,true))
+            local passFilter=(fLower=="" or base:lower():find(fLower,1,true))
             if passFilter then
                 if not baseSet[base] then baseSet[base]=0 end
                 baseSet[base]=baseSet[base]+iv.Value
@@ -921,7 +990,7 @@ end -- merge do
 local RemoteMerge = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RemoteMerge")
 
 local function getActiveMergeTier()
-    local dInv=LP:FindFirstChild("DoodleInv"); if not dInv then return nil,nil end
+    local dInv=getDInv(); if not dInv then return nil,nil end
     for base,_ in pairs(mergeTargets) do
         for tier=0,2 do
             local name=getTierName(base,tier)
@@ -939,8 +1008,9 @@ task.spawn(function()
         if states.mergeActive and anyTarget then
             local petName,tier,activeBase=getActiveMergeTier()
             if petName then
-                local dInv=LP:FindFirstChild("DoodleInv")
-                local cnt=dInv and dInv:FindFirstChild(petName) and dInv:FindFirstChild(petName).Value or 0
+                local dInv=getDInv()
+                local iv=dInv and dInv:FindFirstChild(petName)
+                local cnt=iv and iv.Value or 0
                 MSStatus.Text="🔀 Merging T"..tier.." "..petName.." (x"..cnt..")"
                 SLbl.Text="Merging: "..petName.." x"..cnt
                 local squad={["1"]=petName,["2"]=petName,["3"]=petName,["4"]=petName}
@@ -956,7 +1026,7 @@ task.spawn(function()
             end
         else task.wait(0.5) end
         if states.autoMergeTitan then
-            local dInv=LP:FindFirstChild("DoodleInv")
+            local dInv=getDInv()
             local titanCount=dInv and dInv:FindFirstChild("Titan Basic") and dInv:FindFirstChild("Titan Basic").Value or 0
             if titanCount>=4 then
                 SLbl.Text="✨ Merging Titan Basic → Sparkling..."
@@ -973,14 +1043,37 @@ end)
 -- ============================================================
 --  FARM TAB
 -- ============================================================
-local function isInBattle()
-    for _,sg in pairs(LP.PlayerGui:GetChildren()) do
-        if sg:IsA("ScreenGui") then
-            local bf=sg:FindFirstChild("BattleFrame")
-            if bf and bf.Visible then return true end
-        end
+local playerGui = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui")
+
+-- Battle UI tracking: avoid scanning PlayerGui every time.
+local battleFrame=nil
+local function setBattleFrameIfMatch(inst)
+    if inst and inst.Name=="BattleFrame" and inst:IsA("GuiObject") then
+        battleFrame=inst
     end
-    return false
+end
+
+-- initial scan (once)
+for _,d in ipairs(playerGui:GetDescendants()) do
+    setBattleFrameIfMatch(d)
+    if battleFrame then break end
+end
+
+playerGui.DescendantAdded:Connect(function(d)
+    if not battleFrame then
+        setBattleFrameIfMatch(d)
+    end
+end)
+
+playerGui.DescendantRemoving:Connect(function(d)
+    if d==battleFrame then
+        battleFrame=nil
+    end
+end)
+
+local function isInBattle()
+    local bf=battleFrame
+    return bf and bf.Parent and bf.Visible or false
 end
 
 do
@@ -1112,16 +1205,19 @@ local DoorScroll=Instance.new("ScrollingFrame",DoorListFrame); DoorScroll.Size=U
 local DoorLayout=Instance.new("UIListLayout",DoorScroll); DoorLayout.SortOrder=Enum.SortOrder.LayoutOrder; DoorLayout.Padding=UDim.new(0,2); Instance.new("UIPadding",DoorScroll).PaddingTop=UDim.new(0,4)
 DoorStatusLbl=Instance.new("TextLabel",PFarm); DoorStatusLbl.Size=UDim2.new(1,-10,0,18); DoorStatusLbl.BackgroundTransparency=1; DoorStatusLbl.TextColor3=C.sub; DoorStatusLbl.Font=Enum.Font.Code; DoorStatusLbl.TextSize=9; DoorStatusLbl.TextXAlignment=Enum.TextXAlignment.Left; DoorStatusLbl.LayoutOrder=4; DoorStatusLbl.Text="  Select doors to unlock"
 checkOwned=function(petName)
-    local owned=false
-    pcall(function()
-        local dInv=LP:FindFirstChild("DoodleInv"); if not dInv then return end
-        local variants={petName,"Giant "..petName,"Mega "..petName,"Titan "..petName,"Sparking "..petName}
-        for _,iv in pairs(dInv:GetChildren()) do
-            for _,v in ipairs(variants) do if iv.Name==v and iv.Value>0 then owned=true; break end end
-            if owned then break end
-        end
-    end)
-    return owned
+    local dInv=getDInv()
+    if not dInv then return false end
+    local iv=dInv:FindFirstChild(petName)
+    if iv and iv.Value>0 then return true end
+    iv=dInv:FindFirstChild("Giant "..petName)
+    if iv and iv.Value>0 then return true end
+    iv=dInv:FindFirstChild("Mega "..petName)
+    if iv and iv.Value>0 then return true end
+    iv=dInv:FindFirstChild("Titan "..petName)
+    if iv and iv.Value>0 then return true end
+    iv=dInv:FindFirstChild("Sparking "..petName)
+    if iv and iv.Value>0 then return true end
+    return false
 end
 local function buildDoorList(filter)
     if next(DOOR_CONFIG)==nil then
@@ -1137,10 +1233,33 @@ local function buildDoorList(filter)
     end
     local doorNames={}; for k,_ in pairs(DOOR_CONFIG) do table.insert(doorNames,k) end; table.sort(doorNames)
     for _,c in pairs(DoorScroll:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
+
+    local f=(filter or "")
+    local fLower=(f~="" and f:lower() or "")
+
+    -- Build a quick lookup of owned pets (all variants) for this refresh
+    local ownedName={}
+    local dInv=getDInv()
+    if dInv then
+        for _,iv in ipairs(dInv:GetChildren()) do
+            if iv:IsA("IntValue") and iv.Value>0 then
+                ownedName[iv.Name]=true
+            end
+        end
+    end
+    local function checkOwnedFast(petName)
+        return ownedName[petName]
+            or ownedName["Giant "..petName]
+            or ownedName["Mega "..petName]
+            or ownedName["Titan "..petName]
+            or ownedName["Sparking "..petName]
+            or false
+    end
+
     for i,dname in ipairs(doorNames) do
-        if filter=="" or dname:lower():find(filter:lower(),1,true) then
+        if fLower=="" or dname:lower():find(fLower,1,true) then
             local needs=DOOR_CONFIG[dname] or {}; local owned=0
-            for _,n in ipairs(needs) do if checkOwned(n.pet) then owned=owned+1 end end
+            for _,n in ipairs(needs) do if checkOwnedFast(n.pet) then owned=owned+1 end end
             local allDone=owned==#needs
             local Row=Instance.new("TextButton",DoorScroll); Row.Size=UDim2.new(1,-6,0,44); Row.BackgroundColor3=C.card; Row.BorderSizePixel=0; Row.Text=""; Row.LayoutOrder=i; Instance.new("UICorner",Row).CornerRadius=UDim.new(0,8)
             local rStroke=Instance.new("UIStroke",Row); rStroke.Color=C.border; rStroke.Thickness=1
@@ -1180,9 +1299,11 @@ local FLayout=Instance.new("UIListLayout",FScroll); FLayout.SortOrder=Enum.SortO
 local FSCount=Instance.new("TextLabel",PFarm); FSCount.Size=UDim2.new(1,-10,0,16); FSCount.BackgroundTransparency=1; FSCount.LayoutOrder=9; FSCount.TextColor3=C.sub; FSCount.Font=Enum.Font.Code; FSCount.TextSize=9; FSCount.TextXAlignment=Enum.TextXAlignment.Left; FSCount.Text="  0 selected"
 buildFarmPetList=function(filter)
     for _,c in pairs(FScroll:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
+    local f=(filter or "")
+    local fLower=(f~="" and f:lower() or "")
     local count=0
     for i,pname in ipairs(petNameList) do
-        if filter=="" or pname:lower():find(filter:lower(),1,true) then
+        if fLower=="" or pname:lower():find(fLower,1,true) then
             count=count+1; local camp=petToCampaign[pname] or "?"
             local Row=Instance.new("TextButton",FScroll); Row.Size=UDim2.new(1,-6,0,40); Row.BackgroundColor3=farmTargets[pname] and Color3.fromRGB(35,20,0) or C.card; Row.BorderSizePixel=0; Row.Text=""; Row.LayoutOrder=i; Instance.new("UICorner",Row).CornerRadius=UDim.new(0,8)
             local rStroke=Instance.new("UIStroke",Row); rStroke.Color=farmTargets[pname] and C.orange or C.border; rStroke.Thickness=1
@@ -1331,15 +1452,66 @@ UserInputService.JumpRequest:Connect(function()
     if RUN_GEN~=_G.AniPixels_RunGen then return end
     if states.infJump then local h=getHuman(); if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end
 end)
+
+-- noclip: cache character parts (avoids per-frame GetDescendants)
+local noclipParts={}
+local noclipConns={}
+local function clearNoclipConns()
+    for i=1,#noclipConns do pcall(function() noclipConns[i]:Disconnect() end) end
+    noclipConns={}
+end
+local function rebuildNoclipParts(char)
+    table.clear(noclipParts)
+    clearNoclipConns()
+    if not char then return end
+    for _,d in ipairs(char:GetDescendants()) do
+        if d:IsA("BasePart") then noclipParts[#noclipParts+1]=d end
+    end
+    noclipConns[#noclipConns+1]=char.DescendantAdded:Connect(function(d)
+        if d:IsA("BasePart") then noclipParts[#noclipParts+1]=d end
+    end)
+    noclipConns[#noclipConns+1]=char.DescendantRemoving:Connect(function(d)
+        if not d:IsA("BasePart") then return end
+        for i=#noclipParts,1,-1 do
+            if noclipParts[i]==d then
+                table.remove(noclipParts,i)
+            end
+        end
+    end)
+end
+rebuildNoclipParts(getChar())
+
+local _lastNoclipPrune=0
 RunService.Stepped:Connect(function()
     if RUN_GEN~=_G.AniPixels_RunGen then return end
-    if states.noclip then
-        local c=getChar(); if c then for _,p in pairs(c:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide=false end end end
+    if not states.noclip then return end
+    local now=os.clock()
+    if now-_lastNoclipPrune>5 then
+        _lastNoclipPrune=now
+        for i=#noclipParts,1,-1 do
+            local p=noclipParts[i]
+            if not (p and p.Parent) then table.remove(noclipParts,i) end
+        end
+    end
+    for i=1,#noclipParts do
+        local p=noclipParts[i]
+        if p and p.Parent then p.CanCollide=false end
     end
 end)
+
+-- god mode: throttle to reduce heartbeat work
+local _lastGod=0
 RunService.Heartbeat:Connect(function()
     if RUN_GEN~=_G.AniPixels_RunGen then return end
-    if states.godMode then local h=getHuman(); if h then h.MaxHealth=math.huge; h.Health=math.huge end end
+    if not states.godMode then return end
+    local now=os.clock()
+    if now-_lastGod < 0.5 then return end
+    _lastGod=now
+    local h=getHuman()
+    if h then
+        if h.MaxHealth~=math.huge then h.MaxHealth=math.huge end
+        if h.Health~=math.huge then h.Health=math.huge end
+    end
 end)
 RunService.Heartbeat:Connect(function()
     if RUN_GEN~=_G.AniPixels_RunGen then return end
@@ -1359,11 +1531,33 @@ RunService.Heartbeat:Connect(function()
         local h=getHuman(); if h then h:ChangeState(Enum.HumanoidStateType.Physics) end
     else if flyBV then flyBV:Destroy(); flyBV=nil end; if flyBG then flyBG:Destroy(); flyBG=nil end end
 end)
+
+-- full bright: apply once on enable, restore on disable
+local _fullBrightApplied=false
+local _origLighting={
+    Ambient=Lighting.Ambient,
+    OutdoorAmbient=Lighting.OutdoorAmbient,
+    Brightness=Lighting.Brightness,
+    FogEnd=Lighting.FogEnd,
+    FogStart=Lighting.FogStart,
+}
 RunService.Heartbeat:Connect(function()
     if RUN_GEN~=_G.AniPixels_RunGen then return end
     if states.fullBright then
-        Lighting.Ambient=Color3.fromRGB(255,255,255); Lighting.OutdoorAmbient=Color3.fromRGB(255,255,255)
-        Lighting.Brightness=10; Lighting.FogEnd=1e6; Lighting.FogStart=1e6
+        if _fullBrightApplied then return end
+        _fullBrightApplied=true
+        Lighting.Ambient=Color3.fromRGB(255,255,255)
+        Lighting.OutdoorAmbient=Color3.fromRGB(255,255,255)
+        Lighting.Brightness=10
+        Lighting.FogEnd=1e6
+        Lighting.FogStart=1e6
+    elseif _fullBrightApplied then
+        _fullBrightApplied=false
+        Lighting.Ambient=_origLighting.Ambient
+        Lighting.OutdoorAmbient=_origLighting.OutdoorAmbient
+        Lighting.Brightness=_origLighting.Brightness
+        Lighting.FogEnd=_origLighting.FogEnd
+        Lighting.FogStart=_origLighting.FogStart
     end
 end)
 task.spawn(function()
@@ -1390,16 +1584,25 @@ local function buildESP(p)
     end)
     if ok then espBillboards[p.Name]=bb end
 end
-RunService.Heartbeat:Connect(function()
-    if RUN_GEN~=_G.AniPixels_RunGen then return end
-    if states.esp then
-        for _,p in pairs(Players:GetPlayers()) do
-            if p~=LP then
-                local head=p.Character and p.Character:FindFirstChild("Head")
-                if head and not espBillboards[p.Name] then buildESP(p)
-                elseif not head and espBillboards[p.Name] then pcall(function() espBillboards[p.Name]:Destroy() end); espBillboards[p.Name]=nil end
+
+-- ESP: poll at a lower rate than Heartbeat
+task.spawn(function()
+    while true do
+        if RUN_GEN~=_G.AniPixels_RunGen then break end
+        if states.esp then
+            for _,p in ipairs(Players:GetPlayers()) do
+                if p~=LP then
+                    local head=p.Character and p.Character:FindFirstChild("Head")
+                    if head and not espBillboards[p.Name] then
+                        buildESP(p)
+                    elseif (not head) and espBillboards[p.Name] then
+                        pcall(function() espBillboards[p.Name]:Destroy() end)
+                        espBillboards[p.Name]=nil
+                    end
+                end
             end
         end
+        task.wait(0.5)
     end
 end)
 -- Apply saved walk speed immediately on load
@@ -1410,6 +1613,7 @@ LP.CharacterAdded:Connect(function(c)
     task.wait(1); local h=c:WaitForChild("Humanoid"); h.WalkSpeed=walkSpeed
     if flyBV then flyBV:Destroy(); flyBV=nil end
     if flyBG then flyBG:Destroy(); flyBG=nil end
+    rebuildNoclipParts(c)
 end)
 
 -- ── Boss loops ─────────────────────────────────────────────────
@@ -1426,7 +1630,7 @@ local function bossLoop(key,path)
                     local bossModel=nil
                     pcall(function()
                         local campaign=workspace:WaitForChild("Campaign",3)
-                        for _,m in pairs(campaign:GetChildren()) do if m.Name==path then bossModel=m; break end end
+                        bossModel=campaign and campaign:FindFirstChild(path)
                     end)
                     if bossModel then
                         if not states.bossNoTP then
@@ -1477,24 +1681,36 @@ task.spawn(function()
                 root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
             end); task.wait(0.3)
         end
-        local waveLabel,objLabel=nil,nil
-        pcall(function()
-            local sg=LP.PlayerGui:FindFirstChild("ScreenGui"); local tf=sg and sg:FindFirstChild("Trials")
-            waveLabel=tf and tf:FindFirstChild("WaveLabel"); objLabel=tf and tf:FindFirstChild("ObjectiveLabel")
-        end)
-        local function getWave() local n=0; pcall(function() if waveLabel and waveLabel.Parent then n=tonumber(waveLabel.ContentText:match("%d+")) or 0 end end); return n end
+        local waveLabel=nil
+        do
+            local sg=playerGui:FindFirstChild("ScreenGui")
+            local tf=sg and sg:FindFirstChild("Trials")
+            waveLabel=tf and tf:FindFirstChild("WaveLabel")
+        end
+        local function getWave()
+            local wl=waveLabel
+            if not (wl and wl.Parent) then return 0 end
+            local n=tonumber((wl.ContentText or ""):match("%d+"))
+            return n or 0
+        end
         local currentWave=getWave(); local sessionAlive=true
+        local lastTp=0
         while states.trialsActive and sessionAlive do
             if RUN_GEN~=_G.AniPixels_RunGen then break end
-            pcall(function()
-                if not states.trialsNoTP then
-                    local root=getRoot(); if root then
+            if not states.trialsNoTP then
+                local now=os.clock()
+                if now-lastTp>2 then
+                    lastTp=now
+                    pcall(function()
+                        local root=getRoot(); if not root then return end
                         local hrp=battleModel:FindFirstChild("HumanoidRootPart")
                         local pos=hrp and hrp.Position or battleModel:GetModelCFrame().Position
-                        root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.2)
-                    end
+                        if (root.Position-pos).Magnitude>25 then
+                            root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                        end
+                    end)
                 end
-            end)
+            end
             currentWave=getWave()
             TSLbl.Text="⚔ Wave "..currentWave.."/"..(states.trialsNoLeave and "∞" or tostring(leaveWave))
             if not states.trialsNoLeave and currentWave>=leaveWave then
@@ -1523,13 +1739,16 @@ task.spawn(function()
         if RUN_GEN~=_G.AniPixels_RunGen then break end
         if states.doorUnlock then
             local allMissing={}
+            local missingSet={}
             for doorName,_ in pairs(selectedDoors) do
                 local needs=DOOR_CONFIG[doorName] or {}
                 for _,n in ipairs(needs) do
                     local have=checkOwned(n.pet)
                     if not have then
-                        local dup=false; for _,m in ipairs(allMissing) do if m.pet==n.pet then dup=true; break end end
-                        if not dup then table.insert(allMissing,{pet=n.pet,door=doorName}) end
+                        if not missingSet[n.pet] then
+                            missingSet[n.pet]=true
+                            table.insert(allMissing,{pet=n.pet,door=doorName})
+                        end
                     end
                 end
             end
@@ -1559,12 +1778,73 @@ end)
 
 -- ── Dragon Ball loop ───────────────────────────────────────────
 local VIM_DB=game:GetService("VirtualInputManager")
+local ws=workspace
+
+-- Track world dragon balls without repeated FindFirstChild scans.
+local worldBalls={}        -- [idx]=Instance
+local worldBallCount=0
+local function trackBall(inst)
+    if not inst then return end
+    local idx=tonumber(tostring(inst.Name):match("^DragonBall(%d)$"))
+    if idx and idx>=1 and idx<=7 then
+        if not worldBalls[idx] then worldBallCount=worldBallCount+1 end
+        worldBalls[idx]=inst
+    end
+end
+local function untrackBall(inst)
+    if not inst then return end
+    local idx=tonumber(tostring(inst.Name):match("^DragonBall(%d)$"))
+    if idx and worldBalls[idx]==inst then
+        worldBalls[idx]=nil
+        worldBallCount=math.max(0,worldBallCount-1)
+    end
+end
+for _,c in ipairs(ws:GetChildren()) do trackBall(c) end
+ws.ChildAdded:Connect(trackBall)
+ws.ChildRemoved:Connect(untrackBall)
+
+-- Cache backpack UI + slots (UI can respawn).
+local backpackGui=nil
+local backpackSlots=nil
+local function bindBackpack()
+    backpackGui=nil
+    backpackSlots=nil
+    local sg=playerGui:FindFirstChild("ScreenGui")
+    local bp=sg and sg:FindFirstChild("DragonBallBackpack")
+    if not bp then return end
+    local slots={}
+    for i=1,7 do
+        slots[i]=bp:FindFirstChild(tostring(i))
+    end
+    backpackGui=bp
+    backpackSlots=slots
+end
+bindBackpack()
+playerGui.DescendantAdded:Connect(function(d)
+    if backpackGui then return end
+    if d and d.Name=="DragonBallBackpack" then
+        task.defer(bindBackpack)
+    end
+end)
+playerGui.DescendantRemoving:Connect(function(d)
+    if d==backpackGui then
+        backpackGui=nil
+        backpackSlots=nil
+    end
+end)
+
 local function countBackpackBalls()
+    local slots=backpackSlots
+    if not slots then
+        bindBackpack()
+        slots=backpackSlots
+        if not slots then return 0 end
+    end
     local count=0
-    pcall(function()
-        local backpack=LP.PlayerGui:FindFirstChild("ScreenGui") and LP.PlayerGui.ScreenGui:FindFirstChild("DragonBallBackpack")
-        if backpack then for i=1,7 do local slot=backpack:FindFirstChild(tostring(i)); if slot and slot.Visible then count=count+1 end end end
-    end)
+    for i=1,7 do
+        local slot=slots[i]
+        if slot and slot.Parent and slot.Visible then count=count+1 end
+    end
     return count
 end
 task.spawn(function()
@@ -1578,11 +1858,16 @@ task.spawn(function()
                 for i=1,7 do if dbDots[i] then dbDots[i].BackgroundColor3=Color3.fromRGB(255,210,50); local n=dbDots[i]:FindFirstChildOfClass("TextLabel"); if n then n.TextColor3=Color3.fromRGB(0,0,0) end end end
                 task.wait(3)
             else
-                local ws=game:GetService("Workspace"); local found={}
-                for i=1,7 do local ball=ws:FindFirstChild("DragonBall"..i); if ball then table.insert(found,{idx=i,model=ball}) end end
+                local found={}
+                for i=1,7 do
+                    local ball=worldBalls[i]
+                    if ball and ball.Parent then
+                        found[#found+1]={idx=i,model=ball}
+                    end
+                end
                 for i=1,7 do
                     if dbDots[i] then
-                        local inWorld=false; for _,f in ipairs(found) do if f.idx==i then inWorld=true; break end end
+                        local inWorld=worldBalls[i]~=nil
                         dbDots[i].BackgroundColor3=inWorld and Color3.fromRGB(220,160,0) or Color3.fromRGB(30,25,5)
                         local numLbl=dbDots[i]:FindFirstChildOfClass("TextLabel"); if numLbl then numLbl.TextColor3=inWorld and Color3.fromRGB(255,255,255) or Color3.fromRGB(100,80,20) end
                     end
@@ -1649,11 +1934,7 @@ task.spawn(function()
     local TeleportService=game:GetService("TeleportService")
     local HttpService=game:GetService("HttpService")
     local placeId=game.PlaceId; local currentJobId=game.JobId; local isHopping=false
-    local function countDragonBalls()
-        local ws=game:GetService("Workspace"); local count=0
-        for i=1,7 do if ws:FindFirstChild("DragonBall"..i) then count=count+1 end end
-        return count
-    end
+    local function countDragonBalls() return worldBallCount end
     local function hopToNext()
         if isHopping then return end; isHopping=true
         SLbl.Text="🌐 Finding next server..."
@@ -1667,7 +1948,7 @@ task.spawn(function()
                 end
             end
         end)
-        pcall(function() if queue_on_teleport and states.autoReExec then queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'",true))()') end end)
+        pcall(armQueue)
         _G.AniPixels_ServerHop=true; task.wait(0.3)
         if nextServerId then SLbl.Text="🌐 Hopping..."; pcall(function() TeleportService:TeleportToPlaceInstance(placeId,nextServerId) end)
         else SLbl.Text="🌐 No server found, rejoining..."; pcall(function() TeleportService:Teleport(placeId) end) end
@@ -1697,3 +1978,4 @@ task.spawn(function()
     end
 end)
 end -- auto re-exec do
+
