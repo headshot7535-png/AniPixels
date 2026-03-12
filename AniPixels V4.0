@@ -1903,7 +1903,7 @@ end)
 
 -- ── Auto re-exec + server hop ──────────────────────────────────
 do
-local REEXEC_URL="https://raw.githubusercontent.com/headshot7535-png/Nexuslib/main/Nexuslib"
+local REEXEC_URL="https://raw.githubusercontent.com/headshot7535-png/AniPixels/main/AniPixels%20V4.0"
 if _G.AniPixels_AutoRejoin and not states.autoReExec then states.autoReExec=true; saveSettings() end
 local function syncRejoinFlag() _G.AniPixels_AutoRejoin=states.autoReExec end
 syncRejoinFlag()
