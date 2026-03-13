@@ -16,8 +16,24 @@ local function httpRequest(opts)
     return fn(opts)
 end
 
--- ── Load NexusLib ─────────────────────────────────────────────
-local Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/headshot7535-png/Nexuslib/main/Nexuslib"))()
+-- ── Load NexusLib (local file or URL) ─────────────────────────
+-- Use "NexusLib.lua" in your executor script folder, or set URL to your hosted NexusLib (e.g. v1.1 with MergeTab).
+local NEXUSLIB_URL = "https://raw.githubusercontent.com/headshot7535-png/Nexuslib/main/Nexuslib"
+local Lib
+if readfile and pcall then
+    local ok, content = pcall(readfile, "NexusLib.lua")
+    if ok and type(content) == "string" and #content > 500 then
+        Lib = loadstring(content)()
+    end
+end
+if not Lib then
+    local ok, err = pcall(function()
+        Lib = loadstring(game:HttpGet(NEXUSLIB_URL))()
+    end)
+    if not ok or not Lib then
+        warn("[AniPixels] NexusLib load failed:", err or "HttpGet returned nil")
+    end
+end
 if not Lib then error("[AniPixels] NexusLib failed to load") end
 
 -- ── Services ─────────────────────────────────────────────────
