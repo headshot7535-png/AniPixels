@@ -550,6 +550,36 @@ FTab:Button("🌀","TP to Merge Circle","Teleport to Magic Circle",C.green,funct
         SLbl.Text="Teleported to Magic Circle"
     end)
 end)
+FTab:Button("💬","Join Discord","Copies invite link to clipboard",C.accent,function()
+    local invite="https://discord.gg/vSTmMTyw"
+    local copied=false
+    pcall(function()
+        if setclipboard then
+            setclipboard(invite)
+            copied=true
+            return
+        end
+        if toclipboard then
+            toclipboard(invite)
+            copied=true
+            return
+        end
+        if syn and syn.write_clipboard then
+            syn.write_clipboard(invite)
+            copied=true
+            return
+        end
+        if Clipboard and Clipboard.set then
+            Clipboard.set(invite)
+            copied=true
+        end
+    end)
+    if copied then
+        SLbl.Text="💬 Discord invite copied!"
+    else
+        SLbl.Text="⚠ Clipboard unsupported; invite: "..invite
+    end
+end)
 
 -- ============================================================
 --  BOSSES TAB
