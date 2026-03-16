@@ -1390,7 +1390,8 @@ local FSearchBox, FRefreshBtn, buildFarmPetList
 do
 local FSearchCard=Instance.new("Frame",PFarm); FSearchCard.Size=UDim2.new(1,-10,0,38); FSearchCard.BackgroundColor3=C.card; FSearchCard.BorderSizePixel=0; FSearchCard.LayoutOrder=7; Instance.new("UICorner",FSearchCard).CornerRadius=UDim.new(0,10); Instance.new("UIStroke",FSearchCard).Color=C.border
 local FSearchIcon=Instance.new("TextLabel",FSearchCard); FSearchIcon.Text="🔍"; FSearchIcon.Size=UDim2.new(0,30,1,0); FSearchIcon.Position=UDim2.new(0,4,0,0); FSearchIcon.BackgroundTransparency=1; FSearchIcon.TextSize=14; FSearchIcon.Font=Enum.Font.GothamBold
-FSearchBox=Instance.new("TextBox",FSearchCard); FSearchBox.Size=UDim2.new(1,-70,1,0); FSearchBox.Position=UDim2.new(0,32,0,0); FSearchBox.BackgroundTransparency=1; FSearchBox.TextColor3=C.text; FSearchBox.Font=Enum.Font.Code; FSearchBox.TextSize=11; FSearchBox.PlaceholderText="search pets..."; FSearchBox.Text=""; FSearchBox.TextXAlignment=Enum.TextXAlignment.Left
+FSearchBox=Instance.new("TextBox",FSearchCard); FSearchBox.Size=UDim2.new(1,-124,1,0); FSearchBox.Position=UDim2.new(0,32,0,0); FSearchBox.BackgroundTransparency=1; FSearchBox.TextColor3=C.text; FSearchBox.Font=Enum.Font.Code; FSearchBox.TextSize=11; FSearchBox.PlaceholderText="search pets..."; FSearchBox.Text=""; FSearchBox.TextXAlignment=Enum.TextXAlignment.Left
+local FClearBtn=Instance.new("TextButton",FSearchCard); FClearBtn.Text="Clear"; FClearBtn.Size=UDim2.new(0,50,0,26); FClearBtn.Position=UDim2.new(1,-88,0.5,-13); FClearBtn.BackgroundColor3=Color3.fromRGB(75,25,25); FClearBtn.TextColor3=Color3.fromRGB(255,210,210); FClearBtn.Font=Enum.Font.GothamBold; FClearBtn.TextSize=10; FClearBtn.BorderSizePixel=0; Instance.new("UICorner",FClearBtn).CornerRadius=UDim.new(0,6)
 FRefreshBtn=Instance.new("TextButton",FSearchCard); FRefreshBtn.Text="↻"; FRefreshBtn.Size=UDim2.new(0,30,0,26); FRefreshBtn.Position=UDim2.new(1,-34,0.5,-13); FRefreshBtn.BackgroundColor3=C.border; FRefreshBtn.TextColor3=C.text; FRefreshBtn.Font=Enum.Font.GothamBold; FRefreshBtn.TextSize=16; FRefreshBtn.BorderSizePixel=0; Instance.new("UICorner",FRefreshBtn).CornerRadius=UDim.new(0,6)
 local FListFrame=Instance.new("Frame",PFarm); FListFrame.Size=UDim2.new(1,-10,0,180); FListFrame.BackgroundColor3=C.card; FListFrame.BorderSizePixel=0; FListFrame.LayoutOrder=8; FListFrame.ClipsDescendants=true; Instance.new("UICorner",FListFrame).CornerRadius=UDim.new(0,10); Instance.new("UIStroke",FListFrame).Color=C.border
 local FScroll=Instance.new("ScrollingFrame",FListFrame); FScroll.Size=UDim2.new(1,0,1,0); FScroll.BackgroundTransparency=1; FScroll.BorderSizePixel=0; FScroll.ScrollBarThickness=3; FScroll.ScrollBarImageColor3=C.accent; FScroll.CanvasSize=UDim2.new(0,0,0,0)
@@ -1424,6 +1425,12 @@ end -- farm search do
 
 buildFarmPetList(""); FSearchBox:GetPropertyChangedSignal("Text"):Connect(function() buildFarmPetList(FSearchBox.Text) end)
 FRefreshBtn.MouseButton1Click:Connect(function() refreshPetCampaignMap(); buildFarmPetList(FSearchBox.Text) end)
+FClearBtn.MouseButton1Click:Connect(function()
+    for n,_ in pairs(farmTargets) do farmTargets[n]=nil end
+    saveSettings()
+    buildFarmPetList(FSearchBox.Text)
+    FSStatus.Text=(states.farmActive and "ON" or "OFF").." · No targets selected"
+end)
 
 -- Farm loop
 local farmTargetList={}
