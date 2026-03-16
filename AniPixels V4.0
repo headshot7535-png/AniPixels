@@ -89,7 +89,7 @@ local states = {
     autoAllForOne=false, autoDioHeaven=false, autoMadara=false,
     autoAreaBosses=false,
     mergeActive=false,
-    farmNoTP=false, bossNoTP=false, farmActive=false,
+    farmNoTP=false, bossNoTP=false, farmActive=false, autoFarmIndex=false,
     trialsActive=false, trialsNoTP=false, trialsNoLeave=false,
     serverHop=false, dragonBall=false, doorUnlock=false,
     fastForward=false, autoReExec=false, autoPVP=false,
@@ -112,12 +112,14 @@ local selectedDoors  = {}
 local farmTeam       = {}
 local savedTeams     = {}
 local farmTeamName   = ""
-local modePriority = {"AreaBosses","RaidBosses","Trials","AutoFarm","PVP"}
+local isInBattle
+local modePriority = {"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","PVP"}
 local PRIORITY_LABELS = {
     AreaBosses="Area Bosses",
     RaidBosses="Raid Bosses",
     Trials="Trials",
     AutoFarm="Auto Farm",
+    AutoFarmIndex="Auto Farm Index",
     PVP="PVP",
 }
 
@@ -289,7 +291,7 @@ if LS.hopDelay       then hopDelay=LS.hopDelay end
 if LS.mergeThreshold then mergeThreshold=LS.mergeThreshold end
 if LS.mergeMaxTier~=nil then mergeMaxTier=math.clamp(math.floor(LS.mergeMaxTier),0,7) end
 if LS.modePriority then
-    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,PVP=true}
+    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,AutoFarmIndex=true,PVP=true}
     local parsed,seen={},{}
     for m in (LS.modePriority..","):gmatch("([^,]+),") do
         if allowed[m] and not seen[m] then
@@ -297,7 +299,7 @@ if LS.modePriority then
             parsed[#parsed+1]=m
         end
     end
-    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","PVP"}) do
+    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","PVP"}) do
         if not seen[m] then parsed[#parsed+1]=m end
     end
     modePriority=parsed
@@ -359,7 +361,7 @@ local function modePriorityText()
     return table.concat(t," > ")
 end
 local function setModePriority(newOrder)
-    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,PVP=true}
+    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,AutoFarmIndex=true,PVP=true}
     local seen,parsed={},{}
     for _,m in ipairs(newOrder or {}) do
         if allowed[m] and not seen[m] then
@@ -367,7 +369,7 @@ local function setModePriority(newOrder)
             parsed[#parsed+1]=m
         end
     end
-    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","PVP"}) do
+    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","PVP"}) do
         if not seen[m] then parsed[#parsed+1]=m end
     end
     modePriority=parsed
@@ -409,13 +411,13 @@ local function refreshPrioLabel()
     prioLabel.Set("Current: "..modePriorityText())
 end
 PrioTab:Section("Select Priority Slots")
-local prioModeOrder={"AreaBosses","RaidBosses","Trials","AutoFarm","PVP"}
+local prioModeOrder={"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","PVP"}
 local prioInputs={}
 local function currentPriorityIndex(mode)
     for i,m in ipairs(modePriority) do
         if m==mode then return i end
     end
-    return 5
+    return #prioModeOrder
 end
 local function refreshPriorityInputs()
     for mode,inputRef in pairs(prioInputs) do
@@ -425,13 +427,13 @@ local function refreshPriorityInputs()
 end
 for _,mode in ipairs(prioModeOrder) do
     local title=(PRIORITY_LABELS[mode] or mode).." Priority"
-    prioInputs[mode]=PrioTab:Input(title,"Type 1-5 (1 = highest)","1-5",tostring(currentPriorityIndex(mode)),function(text)
+    prioInputs[mode]=PrioTab:Input(title,"Type 1-"..#prioModeOrder.." (1 = highest)","1-"..#prioModeOrder,tostring(currentPriorityIndex(mode)),function(text)
         local n=tonumber((tostring(text or ""):match("%d+")) or "")
         if not n then
             refreshPriorityInputs()
             return
         end
-        reorderModeToPosition(mode,math.clamp(math.floor(n),1,5))
+        reorderModeToPosition(mode,math.clamp(math.floor(n),1,#prioModeOrder))
         refreshPriorityInputs()
     end)
 end
@@ -771,11 +773,57 @@ local function hasAliveSelectedRaidBoss()
     return false
 end
 
+local _missingIndexCount=-1
+local _missingIndexAt=0
+local function hasOwnedAnyTierFast(base, ownedName)
+    return ownedName[base]
+        or ownedName["Giant "..base]
+        or ownedName["Mega "..base]
+        or ownedName["Titan "..base]
+        or ownedName["Sparking "..base]
+        or ownedName["Giant Sparking "..base]
+        or ownedName["Mega Sparking "..base]
+        or ownedName["Titan Sparking "..base]
+        or ownedName["Sparking Giant "..base]
+        or ownedName["Sparking Mega "..base]
+        or ownedName["Sparking Titan "..base]
+        or false
+end
+local function buildOwnedNameSet()
+    local ownedName={}
+    local dInv=getDInv()
+    if not dInv then return ownedName end
+    for _,iv in ipairs(dInv:GetChildren()) do
+        if iv:IsA("IntValue") and iv.Value>0 then
+            ownedName[iv.Name]=true
+        end
+    end
+    return ownedName
+end
+local function countMissingIndexTargets()
+    local now=os.clock()
+    if now-_missingIndexAt<1 and _missingIndexCount>=0 then
+        return _missingIndexCount
+    end
+    if #petNameList==0 then refreshPetCampaignMap() end
+    local ownedName=buildOwnedNameSet()
+    local missing=0
+    for _,petName in ipairs(petNameList) do
+        if not hasOwnedAnyTierFast(petName,ownedName) then
+            missing=missing+1
+        end
+    end
+    _missingIndexAt=now
+    _missingIndexCount=missing
+    return missing
+end
+
 local function isModeBlocking(mode)
     if mode=="AreaBosses" then return states.autoAreaBosses and hasAliveAreaBoss() end
     if mode=="RaidBosses" then return hasAliveSelectedRaidBoss() end
     if mode=="Trials" then return states.trialsActive end
     if mode=="AutoFarm" then return states.farmActive and next(farmTargets)~=nil end
+    if mode=="AutoFarmIndex" then return states.autoFarmIndex and countMissingIndexTargets()>0 end
     if mode=="PVP" then return states.autoPVP and not isInBattle() end
     return false
 end
@@ -1450,7 +1498,7 @@ playerGui.DescendantRemoving:Connect(function(d)
     end
 end)
 
-local function isInBattle()
+isInBattle=function()
     local bf=battleFrame
     return bf and bf.Parent and bf.Visible or false
 end
@@ -1562,6 +1610,9 @@ task.delay(0.5,function() for _,pd in ipairs(presetDefs) do refreshPresetSlotDis
 -- Farm Options
 FarmTab:Toggle("🚫 Disable Teleport","Farm in-place · no auto TP",states.farmNoTP,function(on)
     states.farmNoTP=on; saveSettings()
+end)
+FarmTab:Toggle("📚 Auto Farm Index","Farm pets missing from your DoodleInv index",states.autoFarmIndex,function(on)
+    states.autoFarmIndex=on; saveSettings()
 end)
 
 -- Door unlock
@@ -1757,6 +1808,81 @@ task.spawn(function()
                 end
             end
         else FSBattle.Text="● Not in battle"; FSBattle.TextColor3=C.sub; task.wait(0.5) end
+    end
+end)
+
+-- Auto Farm Index loop (farms pets you do not own yet)
+local farmIndexMissingPos=1
+task.spawn(function()
+    while true do
+        if RUN_GEN~=_G.AniPixels_RunGen then break end
+        if states.autoFarmIndex then
+            if not canRunMode("AutoFarmIndex") then
+                task.wait(0.6)
+                continue
+            end
+            if isInBattle() then
+                task.wait(0.8)
+                continue
+            end
+            if #petNameList==0 then refreshPetCampaignMap() end
+            local ownedName=buildOwnedNameSet()
+            local missing={}
+            for _,petName in ipairs(petNameList) do
+                if not hasOwnedAnyTierFast(petName,ownedName) then
+                    missing[#missing+1]=petName
+                end
+            end
+            _missingIndexAt=os.clock()
+            _missingIndexCount=#missing
+            if #missing==0 then
+                SLbl.Text="📚 Index complete: all discovered pets owned"
+                task.wait(2)
+            else
+                if farmIndexMissingPos>#missing then farmIndexMissingPos=1 end
+                local target=missing[farmIndexMissingPos]
+                farmIndexMissingPos=farmIndexMissingPos+1
+                local campFolder=petToCampaign[target]
+                if campFolder and campFolder~="" then
+                    SLbl.Text="📚 Index Farm "..(farmIndexMissingPos-1).."/"..#missing..": "..target
+                    applyPresetTeam("Farm"); task.wait(0.2)
+                    local battleModel=findCampaignModelForPet(target)
+                    if battleModel then
+                        if isInBattle() then
+                            task.wait(0.8)
+                            continue
+                        end
+                        if not states.farmNoTP then
+                            pcall(function()
+                                local root=getRoot(); if not root then return end
+                                local pos=battleModel:GetModelCFrame().Position
+                                if (root.Position-pos).Magnitude>30 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
+                            end)
+                        end
+                        if not isInBattle() then
+                            pcall(function() RequestBattle:FireServer(battleModel) end)
+                            local appeared=false
+                            for _=1,8 do
+                                if isInBattle() then appeared=true break end
+                                task.wait(0.25)
+                            end
+                            if appeared then
+                                while isInBattle() and states.autoFarmIndex do
+                                    task.wait(0.35)
+                                end
+                            end
+                        end
+                    else
+                        task.wait(0.5)
+                    end
+                else
+                    task.wait(0.4)
+                end
+                task.wait(1)
+            end
+        else
+            task.wait(0.4)
+        end
     end
 end)
 
