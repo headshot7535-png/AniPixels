@@ -87,6 +87,7 @@ local states = {
     antiAfk=false, fullBright=false, esp=false,
     autoBoros=false, autoZamasu=false, autoSukuna=false,
     autoAllForOne=false, autoDioHeaven=false, autoMadara=false,
+    autoAreaBosses=false,
     mergeActive=false,
     farmNoTP=false, bossNoTP=false, farmActive=false,
     trialsActive=false, trialsNoTP=false, trialsNoLeave=false,
@@ -111,6 +112,14 @@ local selectedDoors  = {}
 local farmTeam       = {}
 local savedTeams     = {}
 local farmTeamName   = ""
+local modePriority = {"AreaBosses","RaidBosses","Trials","AutoFarm","PVP"}
+local PRIORITY_LABELS = {
+    AreaBosses="Area Bosses",
+    RaidBosses="Raid Bosses",
+    Trials="Trials",
+    AutoFarm="Auto Farm",
+    PVP="PVP",
+}
 
 local function getTierName(base, tier)
     if tier==0 then return base end
@@ -118,21 +127,25 @@ local function getTierName(base, tier)
     if tier==2 then return "Mega "..base end
     if tier==3 then return "Titan "..base end
     if tier==4 then return "Sparking "..base end
-    if tier==5 then return "Sparking Giant "..base end
-    if tier==6 then return "Sparking Mega "..base end
-    if tier==7 then return "Sparking Titan "..base end
-    return "Sparking Titan "..base
+    if tier==5 then return "Giant Sparking "..base end
+    if tier==6 then return "Mega Sparking "..base end
+    if tier==7 then return "Titan Sparking "..base end
+    return "Titan Sparking "..base
 end
 
 local TIER_LABELS = {
     [0]="Base",[1]="Giant",[2]="Mega",[3]="Titan",
-    [4]="Sparking",[5]="Sparking Giant",[6]="Sparking Mega",[7]="Sparking Titan",
+    [4]="Sparking",[5]="Giant Sparking",[6]="Mega Sparking",[7]="Titan Sparking",
 }
 local function getTierLabel(tier)
     return TIER_LABELS[tier] or "Sparking Titan"
 end
 
-local MERGE_PREFIXES = {"Sparking Titan ","Sparking Mega ","Sparking Giant ","Sparking ","Titan ","Mega ","Giant "}
+local MERGE_PREFIXES = {
+    "Titan Sparking ","Mega Sparking ","Giant Sparking ",
+    "Sparking Titan ","Sparking Mega ","Sparking Giant ",
+    "Sparking ","Titan ","Mega ","Giant "
+}
 local function toMergeBaseName(name)
     local base=tostring(name or "")
     local changed=true
@@ -182,12 +195,13 @@ local function encodeSettings()
     data.hopDelay=hopDelay
     data.mergeThreshold=mergeThreshold
     data.mergeMaxTier=mergeMaxTier
+    data.modePriority=table.concat(modePriority,",")
     data.mergeTargetBase=mergeTargetBase
     local ftnames={}; for n,_ in pairs(farmTargets) do ftnames[#ftnames+1]=n end
     data.farmTargets=table.concat(ftnames,",")
     local sdnames={}; for n,_ in pairs(selectedDoors) do sdnames[#sdnames+1]=n end
     data.selectedDoors=table.concat(sdnames,"|")
-    local presetKeys={"Raid","Farm","Trials","PVP"}
+    local presetKeys={"Raid","AreaBosses","Farm","Trials","PVP"}
     for _,pk in ipairs(presetKeys) do
         local slots=savedTeams[pk] or {["1"]="",["2"]="",["3"]="",["4"]=""}
         for si=1,4 do
@@ -208,6 +222,7 @@ local function encodeSettings()
     t[#t+1]='"hopDelay":'..hopDelay
     t[#t+1]='"mergeThreshold":'..mergeThreshold
     t[#t+1]='"mergeMaxTier":'..mergeMaxTier
+    t[#t+1]='"modePriority":"'..data.modePriority..'"'
     t[#t+1]='"mergeTargetBase":"'..tostring(mergeTargetBase)..'"'
     t[#t+1]='"farmTargets":"'..data.farmTargets..'"'
     t[#t+1]='"selectedDoors":"'..data.selectedDoors..'"'
@@ -273,6 +288,20 @@ if LS.autoFightDelay then autoFightDelay=LS.autoFightDelay end
 if LS.hopDelay       then hopDelay=LS.hopDelay end
 if LS.mergeThreshold then mergeThreshold=LS.mergeThreshold end
 if LS.mergeMaxTier~=nil then mergeMaxTier=math.clamp(math.floor(LS.mergeMaxTier),0,7) end
+if LS.modePriority then
+    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,PVP=true}
+    local parsed,seen={},{}
+    for m in (LS.modePriority..","):gmatch("([^,]+),") do
+        if allowed[m] and not seen[m] then
+            seen[m]=true
+            parsed[#parsed+1]=m
+        end
+    end
+    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","PVP"}) do
+        if not seen[m] then parsed[#parsed+1]=m end
+    end
+    modePriority=parsed
+end
 if LS.mergeTargetBase then mergeTargetBase=LS.mergeTargetBase end
 if LS.leaveWave       then leaveWave=LS.leaveWave end
 if LS.mergeTargets then
@@ -284,7 +313,7 @@ end
 if LS.farmTargets  then for n in (LS.farmTargets..","):gmatch("([^,]+),")  do farmTargets[n]=true  end end
 if LS.selectedDoors then for n in (LS.selectedDoors.."|"):gmatch("([^|]+)|") do selectedDoors[n]=true end end
 do
-    local presetKeys={"Raid","Farm","Trials","PVP"}
+    local presetKeys={"Raid","AreaBosses","Farm","Trials","PVP"}
     for _,pk in ipairs(presetKeys) do
         local s1=LS[pk.."_1"] or ""; local s2=LS[pk.."_2"] or ""
         local s3=LS[pk.."_3"] or ""; local s4=LS[pk.."_4"] or ""
@@ -309,6 +338,7 @@ local TTab    = Win:Tab("⚗️",  "Trials")
 local MTab    = Win:Tab("🔀",  "Merge")
 local FarmTab = Win:Tab("🌾",  "Farm")
 local DTab    = Win:Tab("🐉",  "Dragon")
+local PrioTab = Win:Tab("🥇",  "Priority")
 
 Win:ChatTab()  -- built-in cross-server Firebase chat
 
@@ -319,10 +349,110 @@ local PTrials   = TTab._page
 local PMerge    = MTab._page
 local PFarm     = FarmTab._page
 local PDragon   = DTab._page
+local PPriority = PrioTab._page
+
+local function modePriorityText()
+    local t={}
+    for _,m in ipairs(modePriority) do
+        t[#t+1]=PRIORITY_LABELS[m] or m
+    end
+    return table.concat(t," > ")
+end
+local function setModePriority(newOrder)
+    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,PVP=true}
+    local seen,parsed={},{}
+    for _,m in ipairs(newOrder or {}) do
+        if allowed[m] and not seen[m] then
+            seen[m]=true
+            parsed[#parsed+1]=m
+        end
+    end
+    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","PVP"}) do
+        if not seen[m] then parsed[#parsed+1]=m end
+    end
+    modePriority=parsed
+    saveSettings()
+    SLbl.Text="Priority: "..modePriorityText()
+end
+local function moveModePriority(mode, dir)
+    local idx=nil
+    for i,m in ipairs(modePriority) do
+        if m==mode then idx=i; break end
+    end
+    if not idx then return end
+    local ni=math.clamp(idx + dir,1,#modePriority)
+    if ni==idx then return end
+    modePriority[idx],modePriority[ni]=modePriority[ni],modePriority[idx]
+    saveSettings()
+    SLbl.Text="Priority: "..modePriorityText()
+end
+local function reorderModeToPosition(mode, pos)
+    local idx=nil
+    for i,m in ipairs(modePriority) do
+        if m==mode then idx=i; break end
+    end
+    if not idx then return end
+    local target=math.clamp(math.floor(pos or idx),1,#modePriority)
+    if target==idx then return end
+    table.remove(modePriority,idx)
+    table.insert(modePriority,target,mode)
+    saveSettings()
+    SLbl.Text="Priority: "..modePriorityText()
+end
 
 -- ============================================================
 --  FEATURES TAB  — standard NexusLib widgets
 -- ============================================================
+PrioTab:Section("Priority Order")
+local prioLabel=PrioTab:Label("Current: "..modePriorityText())
+local function refreshPrioLabel()
+    prioLabel.Set("Current: "..modePriorityText())
+end
+PrioTab:Button("ℹ️","Show Current Priority","Displays current automation order",C.accent,function()
+    refreshPrioLabel()
+    SLbl.Text="Priority: "..modePriorityText()
+end)
+PrioTab:Button("🥇","Boss Focus","Area > Raid > Trials > Farm > PVP",C.purple,function()
+    setModePriority({"AreaBosses","RaidBosses","Trials","AutoFarm","PVP"})
+    refreshPrioLabel()
+end)
+PrioTab:Button("🏆","Trials Focus","Trials > Area > Raid > Farm > PVP",C.green,function()
+    setModePriority({"Trials","AreaBosses","RaidBosses","AutoFarm","PVP"})
+    refreshPrioLabel()
+end)
+PrioTab:Button("🌾","Farm Focus","Farm > Area > Raid > Trials > PVP",C.orange,function()
+    setModePriority({"AutoFarm","AreaBosses","RaidBosses","Trials","PVP"})
+    refreshPrioLabel()
+end)
+PrioTab:Section("Select Priority Slots")
+local prioModeOrder={"AreaBosses","RaidBosses","Trials","AutoFarm","PVP"}
+local prioInputs={}
+local function currentPriorityIndex(mode)
+    for i,m in ipairs(modePriority) do
+        if m==mode then return i end
+    end
+    return 5
+end
+local function refreshPriorityInputs()
+    for mode,inputRef in pairs(prioInputs) do
+        if inputRef and inputRef.Set then inputRef.Set(tostring(currentPriorityIndex(mode))) end
+    end
+    refreshPrioLabel()
+end
+for _,mode in ipairs(prioModeOrder) do
+    local title=(PRIORITY_LABELS[mode] or mode).." Priority"
+    prioInputs[mode]=PrioTab:Input(title,"Type 1-5 (1 = highest)","1-5",tostring(currentPriorityIndex(mode)),function(text)
+        local n=tonumber((tostring(text or ""):match("%d+")) or "")
+        if not n then
+            refreshPriorityInputs()
+            return
+        end
+        reorderModeToPosition(mode,math.clamp(math.floor(n),1,5))
+        refreshPriorityInputs()
+    end)
+end
+refreshPriorityInputs()
+
 FTab:Section("Movement")
 FTab:Slider("Walk Speed","default 16 · max 300",{min=0,max=300,default=walkSpeed},function(v)
     walkSpeed=math.floor(v); saveSettings()
@@ -445,6 +575,7 @@ end
 -- team presets
 local presetDefs={
     {key="Raid",  icon="⚔️", color=Color3.fromRGB(140,40,200), colorD=Color3.fromRGB(60,10,100)},
+    {key="AreaBosses", icon="👑", color=Color3.fromRGB(210,130,20), colorD=Color3.fromRGB(90,50,10)},
     {key="Farm",  icon="🌾", color=Color3.fromRGB(180,120,0),  colorD=Color3.fromRGB(80,50,0)},
     {key="Trials",icon="🏆", color=Color3.fromRGB(0,140,200),  colorD=Color3.fromRGB(0,60,100)},
     {key="PVP",   icon="🥊", color=Color3.fromRGB(220,50,50),  colorD=Color3.fromRGB(100,15,15)},
@@ -453,8 +584,43 @@ local presetTeams={}
 for _,pd in ipairs(presetDefs) do
     presetTeams[pd.key]=savedTeams[pd.key] or {["1"]="",["2"]="",["3"]="",["4"]=""}
 end
+local function clickSquadLimitedFilter(key)
+    local ok,target=pcall(function()
+        local sg=LP:FindFirstChildOfClass("PlayerGui") and LP.PlayerGui:FindFirstChild("ScreenGui")
+        local squad=sg and sg:FindFirstChild("Squad")
+        local lf=squad and squad:FindFirstChild("LimitedFilter")
+        return lf and lf:FindFirstChild(key)
+    end)
+    if not ok or not target then return end
+    local btn=nil
+    if target:IsA("GuiButton") then
+        btn=target
+    elseif target.Parent and target.Parent:IsA("GuiButton") then
+        btn=target.Parent
+    else
+        local lbl=target:FindFirstChild("TextLabel")
+        if lbl and lbl.Parent and lbl.Parent:IsA("GuiButton") then btn=lbl.Parent end
+    end
+    if not (btn and btn:IsA("GuiButton")) then return end
+    if firesignal then
+        pcall(function() firesignal(btn.MouseButton1Click) end)
+        pcall(function() firesignal(btn.Activated) end)
+    end
+    pcall(function()
+        local vim=game:GetService("VirtualInputManager")
+        local pos=btn.AbsolutePosition
+        local size=btn.AbsoluteSize
+        local x=math.floor(pos.X + size.X*0.5)
+        local y=math.floor(pos.Y + size.Y*0.5)
+        vim:SendMouseButtonEvent(x,y,0,true,game,0)
+        task.wait(0.03)
+        vim:SendMouseButtonEvent(x,y,0,false,game,0)
+    end)
+end
 local function applyPresetTeam(key)
     local team=presetTeams[key]; if not team then return end
+    clickSquadLimitedFilter(key)
+    task.wait(0.05)
     local slots={}; local hasAny=false
     for i=1,4 do local p=team[tostring(i)] or ""; slots[tostring(i)]=p; if p~="" then hasAny=true end end
     if hasAny then pcall(function() SquadUpdate:FireServer(slots) end) end
@@ -542,8 +708,85 @@ local function isBossDead(p)
     local h=b:FindFirstChildOfClass("Humanoid"); return h and h.Health<=0 or false
 end
 
+local function anyRaidBossEnabled()
+    return states.autoBoros or states.autoZamasu or states.autoSukuna
+        or states.autoAllForOne or states.autoDioHeaven or states.autoMadara
+end
+
+local function hasAliveAreaBoss()
+    local c=getCampaign(); if not c then return false end
+    local defaults={"Pain","Kars","Final Form Muzan","Awakened Mahito"}
+    for _,name in ipairs(defaults) do
+        local model=c:FindFirstChild(name)
+        if model then
+            local h=model:FindFirstChildOfClass("Humanoid")
+            if (not h) or h.Health>0 then return true end
+        end
+    end
+    local ok,res=pcall(function()
+        local ab=game:GetService("ReplicatedStorage"):FindFirstChild("Assets")
+        ab=ab and ab:FindFirstChild("AreaBosses")
+        if not ab then return false end
+        for _,n in ipairs(ab:GetChildren()) do
+            local model=c:FindFirstChild(n.Name)
+            if model then
+                local h=model:FindFirstChildOfClass("Humanoid")
+                if (not h) or h.Health>0 then return true end
+            end
+        end
+        return false
+    end)
+    return ok and res or false
+end
+
+local RAID_BOSS_BY_TOGGLE={
+    autoBoros="Boros",
+    autoZamasu="Fusion Zamasu (Corrupted)",
+    autoSukuna="Heian Era Sukuna",
+    autoAllForOne="All For One",
+    autoDioHeaven="Dio Over Heaven",
+    autoMadara="Madara Ten Tails",
+}
+local function hasAliveSelectedRaidBoss()
+    if not anyRaidBossEnabled() then return false end
+    for key,path in pairs(RAID_BOSS_BY_TOGGLE) do
+        if states[key] and isBossPresent(path) and not isBossDead(path) then
+            return true
+        end
+    end
+    return false
+end
+
+local function isModeBlocking(mode)
+    if mode=="AreaBosses" then return states.autoAreaBosses and hasAliveAreaBoss() end
+    if mode=="RaidBosses" then return hasAliveSelectedRaidBoss() end
+    if mode=="Trials" then return states.trialsActive end
+    if mode=="AutoFarm" then return states.farmActive and next(farmTargets)~=nil end
+    if mode=="PVP" then return states.autoPVP and not isInBattle() end
+    return false
+end
+
+local function canRunMode(mode)
+    local idx=nil
+    for i,m in ipairs(modePriority) do
+        if m==mode then idx=i; break end
+    end
+    if not idx then return true end
+    for i=1,idx-1 do
+        if isModeBlocking(modePriority[i]) then
+            return false
+        end
+    end
+    return true
+end
+
 BTab:Toggle("🚫 Disable Boss TP","Don't teleport to boss before firing",states.bossNoTP,function(on)
     states.bossNoTP=on; saveSettings()
+end)
+
+BTab:Section("Area Bosses")
+BTab:Toggle("👑 Auto Area Bosses","Auto battle AreaBosses when they spawn",states.autoAreaBosses,function(on)
+    states.autoAreaBosses=on; saveSettings()
 end)
 
 BTab:Section("Boss Cards")
@@ -969,7 +1212,7 @@ updateChainPreview=function(base)
         if dInv then local iv=dInv:FindFirstChild(name) if iv then cnt=iv.Value end end
         tierRows[i].name.Text=name; tierRows[i].count.Text="x"..cnt
     end
-    MSChain.Text="Chain: "..base.." → Giant → Mega → Titan → Sparking → Sparking Giant → Sparking Mega → Sparking Titan  (cap: "..getTierLabel(mergeMaxTier)..")"
+    MSChain.Text="Chain: "..base.." → Giant → Mega → Titan → Sparking → Giant Sparking → Mega Sparking → Titan Sparking  (cap: "..getTierLabel(mergeMaxTier)..")"
 end
 
 local petBtns={}
@@ -1077,16 +1320,13 @@ local function tryConfirmSparkingMerge()
 
     local clicked = false
 
-    -- Method 1: Activate (cleanest)
-    pcall(function() confirm:Activate(); clicked = true end)
-
-    -- Method 2: firesignal
+    -- Method 1: firesignal
     if firesignal then
         pcall(function() firesignal(confirm.MouseButton1Click); clicked = true end)
         pcall(function() firesignal(confirm.Activated); clicked = true end)
     end
 
-    -- Method 3: VirtualInputManager pixel click (fallback)
+    -- Method 2: VirtualInputManager pixel click (fallback)
     if not clicked then
         pcall(function()
             local vim  = game:GetService("VirtualInputManager")
@@ -1260,7 +1500,9 @@ local tsLbl=Instance.new("TextLabel",tsBg); tsLbl.Text="TEAM MANAGER"; tsLbl.Siz
 tsLbl.BackgroundTransparency=1; tsLbl.TextColor3=C.sub; tsLbl.Font=Enum.Font.GothamBold; tsLbl.TextSize=9
 
 local GridOuter=Instance.new("Frame",PFarm)
-GridOuter.Size=UDim2.new(1,-10,0,296); GridOuter.BackgroundTransparency=1; GridOuter.BorderSizePixel=0; GridOuter.LayoutOrder=3
+local presetRows=math.ceil(#presetDefs/2)
+local gridHeight=(presetRows*144)-6
+GridOuter.Size=UDim2.new(1,-10,0,gridHeight); GridOuter.BackgroundTransparency=1; GridOuter.BorderSizePixel=0; GridOuter.LayoutOrder=3
 
 local function buildPresetCard(gi,pd)
     local col=(gi-1)%2; local row=math.floor((gi-1)/2)
@@ -1323,12 +1565,12 @@ end)
 local DoorStatusLbl
 local checkOwned
 do
-local DoorSearchCard=Instance.new("Frame",PFarm); DoorSearchCard.Size=UDim2.new(1,-10,0,32); DoorSearchCard.BackgroundColor3=C.card; DoorSearchCard.BorderSizePixel=0; DoorSearchCard.LayoutOrder=4; Instance.new("UICorner",DoorSearchCard).CornerRadius=UDim.new(0,10); Instance.new("UIStroke",DoorSearchCard).Color=C.border
+local DoorSearchCard=Instance.new("Frame",PFarm); DoorSearchCard.Size=UDim2.new(1,-10,0,32); DoorSearchCard.BackgroundColor3=C.card; DoorSearchCard.BorderSizePixel=0; DoorSearchCard.LayoutOrder=5; Instance.new("UICorner",DoorSearchCard).CornerRadius=UDim.new(0,10); Instance.new("UIStroke",DoorSearchCard).Color=C.border
 local DoorSearchBox=Instance.new("TextBox",DoorSearchCard); DoorSearchBox.Size=UDim2.new(1,-10,1,0); DoorSearchBox.Position=UDim2.new(0,8,0,0); DoorSearchBox.BackgroundTransparency=1; DoorSearchBox.TextColor3=C.text; DoorSearchBox.Font=Enum.Font.Code; DoorSearchBox.TextSize=10; DoorSearchBox.PlaceholderText="🔍 Search doors..."; DoorSearchBox.Text=""; DoorSearchBox.TextXAlignment=Enum.TextXAlignment.Left
-local DoorListFrame=Instance.new("Frame",PFarm); DoorListFrame.Size=UDim2.new(1,-10,0,180); DoorListFrame.BackgroundColor3=C.card; DoorListFrame.BorderSizePixel=0; DoorListFrame.LayoutOrder=4; DoorListFrame.ClipsDescendants=true; Instance.new("UICorner",DoorListFrame).CornerRadius=UDim.new(0,10); Instance.new("UIStroke",DoorListFrame).Color=C.border
+local DoorListFrame=Instance.new("Frame",PFarm); DoorListFrame.Size=UDim2.new(1,-10,0,180); DoorListFrame.BackgroundColor3=C.card; DoorListFrame.BorderSizePixel=0; DoorListFrame.LayoutOrder=6; DoorListFrame.ClipsDescendants=true; Instance.new("UICorner",DoorListFrame).CornerRadius=UDim.new(0,10); Instance.new("UIStroke",DoorListFrame).Color=C.border
 local DoorScroll=Instance.new("ScrollingFrame",DoorListFrame); DoorScroll.Size=UDim2.new(1,0,1,0); DoorScroll.BackgroundTransparency=1; DoorScroll.BorderSizePixel=0; DoorScroll.ScrollBarThickness=3; DoorScroll.ScrollBarImageColor3=C.accent; DoorScroll.CanvasSize=UDim2.new(0,0,0,0)
 local DoorLayout=Instance.new("UIListLayout",DoorScroll); DoorLayout.SortOrder=Enum.SortOrder.LayoutOrder; DoorLayout.Padding=UDim.new(0,2); Instance.new("UIPadding",DoorScroll).PaddingTop=UDim.new(0,4)
-DoorStatusLbl=Instance.new("TextLabel",PFarm); DoorStatusLbl.Size=UDim2.new(1,-10,0,18); DoorStatusLbl.BackgroundTransparency=1; DoorStatusLbl.TextColor3=C.sub; DoorStatusLbl.Font=Enum.Font.Code; DoorStatusLbl.TextSize=9; DoorStatusLbl.TextXAlignment=Enum.TextXAlignment.Left; DoorStatusLbl.LayoutOrder=4; DoorStatusLbl.Text="  Select doors to unlock"
+DoorStatusLbl=Instance.new("TextLabel",PFarm); DoorStatusLbl.Size=UDim2.new(1,-10,0,18); DoorStatusLbl.BackgroundTransparency=1; DoorStatusLbl.TextColor3=C.sub; DoorStatusLbl.Font=Enum.Font.Code; DoorStatusLbl.TextSize=9; DoorStatusLbl.TextXAlignment=Enum.TextXAlignment.Left; DoorStatusLbl.LayoutOrder=7; DoorStatusLbl.Text="  Select doors to unlock"
 checkOwned=function(petName)
     local dInv=getDInv()
     if not dInv then return false end
@@ -1414,15 +1656,15 @@ FarmTab:Section("Campaign Targets")
 refreshPetCampaignMap()
 local FSearchBox, FRefreshBtn, FClearBtn, buildFarmPetList
 do
-local FSearchCard=Instance.new("Frame",PFarm); FSearchCard.Size=UDim2.new(1,-10,0,38); FSearchCard.BackgroundColor3=C.card; FSearchCard.BorderSizePixel=0; FSearchCard.LayoutOrder=7; Instance.new("UICorner",FSearchCard).CornerRadius=UDim.new(0,10); Instance.new("UIStroke",FSearchCard).Color=C.border
+local FSearchCard=Instance.new("Frame",PFarm); FSearchCard.Size=UDim2.new(1,-10,0,38); FSearchCard.BackgroundColor3=C.card; FSearchCard.BorderSizePixel=0; FSearchCard.LayoutOrder=8; Instance.new("UICorner",FSearchCard).CornerRadius=UDim.new(0,10); Instance.new("UIStroke",FSearchCard).Color=C.border
 local FSearchIcon=Instance.new("TextLabel",FSearchCard); FSearchIcon.Text="🔍"; FSearchIcon.Size=UDim2.new(0,30,1,0); FSearchIcon.Position=UDim2.new(0,4,0,0); FSearchIcon.BackgroundTransparency=1; FSearchIcon.TextSize=14; FSearchIcon.Font=Enum.Font.GothamBold
 FSearchBox=Instance.new("TextBox",FSearchCard); FSearchBox.Size=UDim2.new(1,-124,1,0); FSearchBox.Position=UDim2.new(0,32,0,0); FSearchBox.BackgroundTransparency=1; FSearchBox.TextColor3=C.text; FSearchBox.Font=Enum.Font.Code; FSearchBox.TextSize=11; FSearchBox.PlaceholderText="search pets..."; FSearchBox.Text=""; FSearchBox.TextXAlignment=Enum.TextXAlignment.Left
 FClearBtn=Instance.new("TextButton",FSearchCard); FClearBtn.Text="Clear"; FClearBtn.Size=UDim2.new(0,50,0,26); FClearBtn.Position=UDim2.new(1,-88,0.5,-13); FClearBtn.BackgroundColor3=Color3.fromRGB(75,25,25); FClearBtn.TextColor3=Color3.fromRGB(255,210,210); FClearBtn.Font=Enum.Font.GothamBold; FClearBtn.TextSize=10; FClearBtn.BorderSizePixel=0; Instance.new("UICorner",FClearBtn).CornerRadius=UDim.new(0,6)
 FRefreshBtn=Instance.new("TextButton",FSearchCard); FRefreshBtn.Text="↻"; FRefreshBtn.Size=UDim2.new(0,30,0,26); FRefreshBtn.Position=UDim2.new(1,-34,0.5,-13); FRefreshBtn.BackgroundColor3=C.border; FRefreshBtn.TextColor3=C.text; FRefreshBtn.Font=Enum.Font.GothamBold; FRefreshBtn.TextSize=16; FRefreshBtn.BorderSizePixel=0; Instance.new("UICorner",FRefreshBtn).CornerRadius=UDim.new(0,6)
-local FListFrame=Instance.new("Frame",PFarm); FListFrame.Size=UDim2.new(1,-10,0,180); FListFrame.BackgroundColor3=C.card; FListFrame.BorderSizePixel=0; FListFrame.LayoutOrder=8; FListFrame.ClipsDescendants=true; Instance.new("UICorner",FListFrame).CornerRadius=UDim.new(0,10); Instance.new("UIStroke",FListFrame).Color=C.border
+local FListFrame=Instance.new("Frame",PFarm); FListFrame.Size=UDim2.new(1,-10,0,180); FListFrame.BackgroundColor3=C.card; FListFrame.BorderSizePixel=0; FListFrame.LayoutOrder=9; FListFrame.ClipsDescendants=true; Instance.new("UICorner",FListFrame).CornerRadius=UDim.new(0,10); Instance.new("UIStroke",FListFrame).Color=C.border
 local FScroll=Instance.new("ScrollingFrame",FListFrame); FScroll.Size=UDim2.new(1,0,1,0); FScroll.BackgroundTransparency=1; FScroll.BorderSizePixel=0; FScroll.ScrollBarThickness=3; FScroll.ScrollBarImageColor3=C.accent; FScroll.CanvasSize=UDim2.new(0,0,0,0)
 local FLayout=Instance.new("UIListLayout",FScroll); FLayout.SortOrder=Enum.SortOrder.LayoutOrder; FLayout.Padding=UDim.new(0,2); Instance.new("UIPadding",FScroll).PaddingTop=UDim.new(0,4)
-local FSCount=Instance.new("TextLabel",PFarm); FSCount.Size=UDim2.new(1,-10,0,16); FSCount.BackgroundTransparency=1; FSCount.LayoutOrder=9; FSCount.TextColor3=C.sub; FSCount.Font=Enum.Font.Code; FSCount.TextSize=9; FSCount.TextXAlignment=Enum.TextXAlignment.Left; FSCount.Text="  0 selected"
+local FSCount=Instance.new("TextLabel",PFarm); FSCount.Size=UDim2.new(1,-10,0,16); FSCount.BackgroundTransparency=1; FSCount.LayoutOrder=10; FSCount.TextColor3=C.sub; FSCount.Font=Enum.Font.Code; FSCount.TextSize=9; FSCount.TextXAlignment=Enum.TextXAlignment.Left; FSCount.Text="  0 selected"
 buildFarmPetList=function(filter)
     for _,c in pairs(FScroll:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
     local f=(filter or "")
@@ -1467,6 +1709,11 @@ task.spawn(function()
         if RUN_GEN~=_G.AniPixels_RunGen then break end
         if not FSBattle or not FSBattle.Parent then break end
         if states.farmActive then
+            if not canRunMode("AutoFarm") then
+                FSStatus.Text="⏸ Paused by priority"
+                task.wait(0.6)
+                continue
+            end
             local inBattle=isInBattle()
             if inBattle then pcall(function() FSBattle.Text="● In battle"; FSBattle.TextColor3=C.green end); task.wait(2)
             else
@@ -1512,7 +1759,11 @@ task.spawn(function()
                 FSBattle.TextColor3=inBattle and C.green or C.sub
             end)
             local cnt=0; for _ in pairs(farmTargets) do cnt=cnt+1 end
-            pcall(function() FSStatus.Text="ON · "..cnt.." target(s)" end)
+            if canRunMode("AutoFarm") then
+                pcall(function() FSStatus.Text="ON · "..cnt.." target(s)" end)
+            else
+                pcall(function() FSStatus.Text="⏸ Paused by priority" end)
+            end
         end
     end
 end)
@@ -1708,7 +1959,7 @@ end)
 task.spawn(function()
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
-        if states.autoPVP and not isInBattle() then
+        if states.autoPVP and canRunMode("PVP") and not isInBattle() then
             applyPresetTeam("PVP")
             task.wait(0.15)
             local ok,err=pcall(function() RemotePVP:FireServer() end)
@@ -1770,13 +2021,84 @@ LP.CharacterAdded:Connect(function(c)
 end)
 
 -- ── Boss loops ─────────────────────────────────────────────────
+local function getAreaBossNames()
+    local names,seen={},{}
+    local defaults={"Pain","Kars","Final Form Muzan","Awakened Mahito"}
+    for _,n in ipairs(defaults) do
+        names[#names+1]=n
+        seen[n]=true
+    end
+    pcall(function()
+        local rs=game:GetService("ReplicatedStorage")
+        local assets=rs:FindFirstChild("Assets")
+        local ab=assets and assets:FindFirstChild("AreaBosses")
+        if not ab then return end
+        for _,c in ipairs(ab:GetChildren()) do
+            if not seen[c.Name] then
+                seen[c.Name]=true
+                names[#names+1]=c.Name
+            end
+        end
+    end)
+    return names
+end
+local function getActiveAreaBossModel()
+    local campaign=getCampaign(); if not campaign then return nil,nil end
+    for _,name in ipairs(getAreaBossNames()) do
+        local model=campaign:FindFirstChild(name)
+        if model then
+            local hum=model:FindFirstChildOfClass("Humanoid")
+            local alive=(not hum) or hum.Health>0
+            if alive then return model,name end
+        end
+    end
+    return nil,nil
+end
+
+task.spawn(function()
+    while true do
+        if RUN_GEN~=_G.AniPixels_RunGen then break end
+        if states.autoAreaBosses then
+            if not canRunMode("AreaBosses") then
+                SLbl.Text="⏸ Area Bosses paused by priority: "..modePriorityText()
+                task.wait(0.6)
+            elseif isInBattle() then
+                SLbl.Text="⏳ In battle, waiting (Area Bosses)"
+                task.wait(1.2)
+            else
+                local model,name=getActiveAreaBossModel()
+                if not model then
+                    SLbl.Text="⏳ Waiting for Area Boss spawn..."
+                    task.wait(1)
+                else
+                    applyPresetTeam("AreaBosses"); task.wait(0.2)
+                    if not states.bossNoTP then
+                        pcall(function()
+                            local root=getRoot(); if root then
+                                local pos=model:GetModelCFrame().Position
+                                if (root.Position-pos).Magnitude>50 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
+                            end
+                        end)
+                    end
+                    pcall(function() RequestBattle:FireServer(model) end)
+                    SLbl.Text="👑 Area Boss: "..name
+                    task.wait(2)
+                end
+            end
+        else
+            task.wait(0.25)
+        end
+    end
+end)
+
 local function bossLoop(key,path)
     task.spawn(function()
         local myGen=RUN_GEN
         while true do
             if myGen~=_G.AniPixels_RunGen then break end
             if states[key] then
-                if isInBattle() then SLbl.Text="⏳ In battle, waiting: "..path; task.wait(2)
+                if not canRunMode("RaidBosses") then SLbl.Text="⏸ Raid Bosses paused by priority: "..modePriorityText(); task.wait(0.6)
+                elseif isInBattle() then SLbl.Text="⏳ In battle, waiting: "..path; task.wait(2)
                 elseif not isBossPresent(path) then SLbl.Text="⏳ Boss not found: "..path; task.wait(1)
                 else
                     applyPresetTeam("Raid"); task.wait(0.2)
@@ -1818,6 +2140,11 @@ task.spawn(function()
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
         if not states.trialsActive then task.wait(0.3); continue end
+        if not canRunMode("Trials") then
+            TSLbl.Text="⏸ Paused by priority"
+            task.wait(0.6)
+            continue
+        end
         TSLbl.Text="▶ Starting trial session..."
         local startOk,startErr=pcall(function() TrialsMode:FireServer({Start=true}) end)
         if not startOk then TSLbl.Text="❌ TrialsMode: "..tostring(startErr); task.wait(2); continue end
