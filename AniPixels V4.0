@@ -1005,6 +1005,10 @@ end -- merge do
 -- ============================================================
 local RemoteMerge = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RemoteMerge")
 
+local function makeMergePayload(petName)
+    return {["1"]=petName,["2"]=petName,["3"]=petName,["4"]=petName}
+end
+
 local function getActiveMergeTier()
     local dInv=getDInv(); if not dInv then return nil,nil end
     for base,_ in pairs(mergeTargets) do
@@ -1029,9 +1033,9 @@ task.spawn(function()
                 local cnt=iv and iv.Value or 0
                 MSStatus.Text="🔀 Merging T"..tier.." "..petName.." (x"..cnt..")"
                 SLbl.Text="Merging: "..petName.." x"..cnt
-                local squad={["1"]=petName,["2"]=petName,["3"]=petName,["4"]=petName}
+                local squad=makeMergePayload(petName)
                 pcall(function() SquadUpdate:FireServer(squad) end); task.wait(0.3)
-                local ok,err=pcall(function() RemoteMerge:InvokeServer(petName) end)
+                local ok,err=pcall(function() RemoteMerge:InvokeServer(squad) end)
                 if not ok then MSStatus.Text="❌ RemoteMerge: "..tostring(err) end
                 task.wait(0.4)
                 buildPetList(SearchBox.Text)
@@ -1046,9 +1050,9 @@ task.spawn(function()
             local titanCount=dInv and dInv:FindFirstChild("Titan Basic") and dInv:FindFirstChild("Titan Basic").Value or 0
             if titanCount>=4 then
                 SLbl.Text="✨ Merging Titan Basic → Sparkling..."
-                local squad={["1"]="Titan Basic",["2"]="Titan Basic",["3"]="Titan Basic",["4"]="Titan Basic"}
+                local squad=makeMergePayload("Titan Basic")
                 pcall(function() SquadUpdate:FireServer(squad) end); task.wait(0.3)
-                local ok2,err2=pcall(function() RemoteMerge:InvokeServer("Titan Basic") end)
+                local ok2,err2=pcall(function() RemoteMerge:InvokeServer(squad) end)
                 SLbl.Text=ok2 and "✨ Sparkling Basic merged!" or "❌ Sparkling merge failed: "..tostring(err2)
                 task.wait(0.5)
             end
