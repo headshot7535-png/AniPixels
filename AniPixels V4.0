@@ -132,6 +132,23 @@ local function getTierLabel(tier)
     return TIER_LABELS[tier] or "Sparking Titan"
 end
 
+local MERGE_PREFIXES = {"Sparking Titan ","Sparking Mega ","Sparking Giant ","Sparking ","Titan ","Mega ","Giant "}
+local function toMergeBaseName(name)
+    local base=tostring(name or "")
+    local changed=true
+    while changed do
+        changed=false
+        for _,p in ipairs(MERGE_PREFIXES) do
+            if base:sub(1,#p)==p then
+                base=base:sub(#p+1)
+                changed=true
+                break
+            end
+        end
+    end
+    return base
+end
+
 local function refreshPetCampaignMap()
     petToCampaign={}; petNameList={}
     pcall(function()
@@ -258,7 +275,12 @@ if LS.mergeThreshold then mergeThreshold=LS.mergeThreshold end
 if LS.mergeMaxTier~=nil then mergeMaxTier=math.clamp(math.floor(LS.mergeMaxTier),0,7) end
 if LS.mergeTargetBase then mergeTargetBase=LS.mergeTargetBase end
 if LS.leaveWave       then leaveWave=LS.leaveWave end
-if LS.mergeTargets then for n in (LS.mergeTargets..","):gmatch("([^,]+),") do mergeTargets[n]=true end end
+if LS.mergeTargets then
+    for n in (LS.mergeTargets..","):gmatch("([^,]+),") do
+        local base=toMergeBaseName(n)
+        if base~="" then mergeTargets[base]=true end
+    end
+end
 if LS.farmTargets  then for n in (LS.farmTargets..","):gmatch("([^,]+),")  do farmTargets[n]=true  end end
 if LS.selectedDoors then for n in (LS.selectedDoors.."|"):gmatch("([^|]+)|") do selectedDoors[n]=true end end
 do
@@ -969,21 +991,21 @@ local function refreshPetHighlights()
     SLbl.Text=count.." merge target(s) selected · up to "..getTierLabel(mergeMaxTier); saveSettings()
 end
 local function toggleBasePet(base)
-    if mergeTargets[base] then mergeTargets[base]=nil else mergeTargets[base]=true end
-    updateChainPreview(base); refreshPetHighlights()
+    local b=toMergeBaseName(base)
+    if b=="" then return end
+    if mergeTargets[b] then mergeTargets[b]=nil else mergeTargets[b]=true end
+    updateChainPreview(b); refreshPetHighlights()
 end
 buildPetList=function(filter)
     for _,c in pairs(PetScroll:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
     petBtns={}
     local dInv=getDInv(); if not dInv then PHLbl.Text="DoodleInv not found"; return end
-    local prefixes={"Sparking Titan ","Sparking Mega ","Sparking Giant ","Sparking ","Titan ","Mega ","Giant "}
     local baseSet={}
     local f=(filter or "")
     local fLower=(f~="" and f:lower() or "")
     for _,iv in pairs(dInv:GetChildren()) do
         if iv:IsA("IntValue") and iv.Value>0 then
-            local n=iv.Name; local base=n
-            for _,p in ipairs(prefixes) do if n:sub(1,#p)==p then base=n:sub(#p+1); break end end
+            local n=iv.Name; local base=toMergeBaseName(n)
             local passFilter=(fLower=="" or base:lower():find(fLower,1,true))
             if passFilter then
                 if not baseSet[base] then baseSet[base]=0 end
