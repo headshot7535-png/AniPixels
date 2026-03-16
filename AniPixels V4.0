@@ -1425,12 +1425,14 @@ end -- farm search do
 
 buildFarmPetList(""); FSearchBox:GetPropertyChangedSignal("Text"):Connect(function() buildFarmPetList(FSearchBox.Text) end)
 FRefreshBtn.MouseButton1Click:Connect(function() refreshPetCampaignMap(); buildFarmPetList(FSearchBox.Text) end)
-FClearBtn.MouseButton1Click:Connect(function()
-    for n,_ in pairs(farmTargets) do farmTargets[n]=nil end
-    saveSettings()
-    buildFarmPetList(FSearchBox.Text)
-    FSStatus.Text=(states.farmActive and "ON" or "OFF").." · No targets selected"
-end)
+if FClearBtn and FClearBtn:IsA("TextButton") then
+    FClearBtn.MouseButton1Click:Connect(function()
+        for n,_ in pairs(farmTargets) do farmTargets[n]=nil end
+        saveSettings()
+        buildFarmPetList(FSearchBox.Text)
+        FSStatus.Text=(states.farmActive and "ON" or "OFF").." · No targets selected"
+    end)
+end
 
 -- Farm loop
 local farmTargetList={}
