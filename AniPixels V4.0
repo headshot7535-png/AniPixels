@@ -87,7 +87,7 @@ local states = {
     antiAfk=false, fullBright=false, esp=false,
     autoBoros=false, autoZamasu=false, autoSukuna=false,
     autoAllForOne=false, autoDioHeaven=false, autoMadara=false,
-    mergeActive=false, autoMergeTitan=false,
+    mergeActive=false,
     farmNoTP=false, bossNoTP=false, farmActive=false,
     trialsActive=false, trialsNoTP=false, trialsNoLeave=false,
     serverHop=false, dragonBall=false, doorUnlock=false,
@@ -98,7 +98,8 @@ local hopDelay       = 10
 local flyBV, flyBG
 local espBillboards  = {}
 local autoFightDelay = 1.5
-local mergeThreshold = 20
+local mergeThreshold = 4
+local mergeMaxTier   = 7
 local leaveWave      = 5
 local mergeTargetBase = ""
 local mergeTargets   = {}
@@ -116,7 +117,19 @@ local function getTierName(base, tier)
     if tier==1 then return "Giant "..base end
     if tier==2 then return "Mega "..base end
     if tier==3 then return "Titan "..base end
-    return base
+    if tier==4 then return "Sparking "..base end
+    if tier==5 then return "Sparking Giant "..base end
+    if tier==6 then return "Sparking Mega "..base end
+    if tier==7 then return "Sparking Titan "..base end
+    return "Sparking Titan "..base
+end
+
+local TIER_LABELS = {
+    [0]="Base",[1]="Giant",[2]="Mega",[3]="Titan",
+    [4]="Sparking",[5]="Sparking Giant",[6]="Sparking Mega",[7]="Sparking Titan",
+}
+local function getTierLabel(tier)
+    return TIER_LABELS[tier] or "Sparking Titan"
 end
 
 local function refreshPetCampaignMap()
@@ -151,6 +164,7 @@ local function encodeSettings()
     data.autoFightDelay=autoFightDelay
     data.hopDelay=hopDelay
     data.mergeThreshold=mergeThreshold
+    data.mergeMaxTier=mergeMaxTier
     data.mergeTargetBase=mergeTargetBase
     local ftnames={}; for n,_ in pairs(farmTargets) do ftnames[#ftnames+1]=n end
     data.farmTargets=table.concat(ftnames,",")
@@ -176,6 +190,7 @@ local function encodeSettings()
     t[#t+1]='"autoFightDelay":'..autoFightDelay
     t[#t+1]='"hopDelay":'..hopDelay
     t[#t+1]='"mergeThreshold":'..mergeThreshold
+    t[#t+1]='"mergeMaxTier":'..mergeMaxTier
     t[#t+1]='"mergeTargetBase":"'..tostring(mergeTargetBase)..'"'
     t[#t+1]='"farmTargets":"'..data.farmTargets..'"'
     t[#t+1]='"selectedDoors":"'..data.selectedDoors..'"'
@@ -240,6 +255,7 @@ if LS.walkSpeed      then walkSpeed=LS.walkSpeed end
 if LS.autoFightDelay then autoFightDelay=LS.autoFightDelay end
 if LS.hopDelay       then hopDelay=LS.hopDelay end
 if LS.mergeThreshold then mergeThreshold=LS.mergeThreshold end
+if LS.mergeMaxTier~=nil then mergeMaxTier=math.clamp(math.floor(LS.mergeMaxTier),0,7) end
 if LS.mergeTargetBase then mergeTargetBase=LS.mergeTargetBase end
 if LS.leaveWave       then leaveWave=LS.leaveWave end
 if LS.mergeTargets then for n in (LS.mergeTargets..","):gmatch("([^,]+),") do mergeTargets[n]=true end end
@@ -673,7 +689,7 @@ end)
 --  MERGE TAB  — custom UI (complex pet picker)
 -- ============================================================
 local updateChainPreview
-local MSStatus, SearchBox, buildPetList
+local MSStatus, SearchBox, buildPetList, updateChainPreview
 
 do
 local MergeStatusCard=Instance.new("Frame",PMerge)
@@ -728,51 +744,10 @@ local MPillBtn=Instance.new("TextButton",MPill)
 MPillBtn.Size=UDim2.new(1,0,1,0); MPillBtn.BackgroundTransparency=1; MPillBtn.Text=""; MPillBtn.ZIndex=3
 MPillBtn.MouseButton1Click:Connect(function() setMerge(not states.mergeActive) end)
 
--- Auto Sparkling toggle
-local titanCard=Instance.new("Frame",PMerge); titanCard.Size=UDim2.new(1,-10,0,52)
-titanCard.BackgroundColor3=C.card; titanCard.BorderSizePixel=0; titanCard.LayoutOrder=2
-Instance.new("UICorner",titanCard).CornerRadius=UDim.new(0,12)
-local tStroke=Instance.new("UIStroke",titanCard); tStroke.Color=C.border
-local tTitle=Instance.new("TextLabel",titanCard)
-tTitle.Size=UDim2.new(1,-60,0,20); tTitle.Position=UDim2.new(0,12,0,8)
-tTitle.BackgroundTransparency=1; tTitle.TextColor3=C.text
-tTitle.Font=Enum.Font.GothamBold; tTitle.TextSize=11; tTitle.TextXAlignment=Enum.TextXAlignment.Left
-tTitle.Text="✨ Basic Titan → Sparkling"
-local tSub=Instance.new("TextLabel",titanCard)
-tSub.Size=UDim2.new(1,-60,0,16); tSub.Position=UDim2.new(0,12,0,28)
-tSub.BackgroundTransparency=1; tSub.TextColor3=C.sub; tSub.Font=Enum.Font.Gotham; tSub.TextSize=9
-tSub.TextXAlignment=Enum.TextXAlignment.Left; tSub.Text="Merges 4x Titan Basic into Sparkling"
-local tPill=Instance.new("Frame",titanCard); tPill.Size=UDim2.new(0,46,0,24)
-tPill.Position=UDim2.new(1,-58,0.5,-12); tPill.BackgroundColor3=C.border; tPill.BorderSizePixel=0
-Instance.new("UICorner",tPill).CornerRadius=UDim.new(1,0)
-local tThumb=Instance.new("Frame",tPill); tThumb.Size=UDim2.new(0,18,0,18)
-tThumb.Position=UDim2.new(0,3,0.5,-9); tThumb.BackgroundColor3=C.sub; tThumb.BorderSizePixel=0
-Instance.new("UICorner",tThumb).CornerRadius=UDim.new(1,0)
-local tti=TweenInfo.new(0.2)
-local function setTitan(on)
-    states.autoMergeTitan=on; saveSettings()
-    if on then
-        TweenService:Create(tPill,tti,{BackgroundColor3=Color3.fromRGB(0,120,50)}):Play()
-        TweenService:Create(tThumb,tti,{Position=UDim2.new(0,25,0.5,-9),BackgroundColor3=C.green}):Play()
-        tStroke.Color=Color3.fromRGB(0,120,50); tTitle.TextColor3=C.green
-    else
-        TweenService:Create(tPill,tti,{BackgroundColor3=C.border}):Play()
-        TweenService:Create(tThumb,tti,{Position=UDim2.new(0,3,0.5,-9),BackgroundColor3=C.sub}):Play()
-        tStroke.Color=C.border; tTitle.TextColor3=C.text
-    end
-end
-if states.autoMergeTitan then
-    tPill.BackgroundColor3=Color3.fromRGB(0,120,50); tThumb.Position=UDim2.new(0,25,0.5,-9)
-    tThumb.BackgroundColor3=C.green; tStroke.Color=Color3.fromRGB(0,120,50); tTitle.TextColor3=C.green
-end
-local tBtn=Instance.new("TextButton",titanCard)
-tBtn.Size=UDim2.new(1,0,1,0); tBtn.BackgroundTransparency=1; tBtn.Text=""; tBtn.ZIndex=3
-tBtn.MouseButton1Click:Connect(function() setTitan(not states.autoMergeTitan) end)
-
 -- Threshold slider card
 local ThreshCard=Instance.new("Frame",PMerge)
 ThreshCard.Size=UDim2.new(1,-10,0,58); ThreshCard.BackgroundColor3=C.card
-ThreshCard.BorderSizePixel=0; ThreshCard.LayoutOrder=3
+ThreshCard.BorderSizePixel=0; ThreshCard.LayoutOrder=2
 Instance.new("UICorner",ThreshCard).CornerRadius=UDim.new(0,10)
 Instance.new("UIStroke",ThreshCard).Color=C.border
 local thn=Instance.new("TextLabel",ThreshCard)
@@ -813,10 +788,64 @@ UserInputService.InputChanged:Connect(function(i) if thDrag and i.UserInputType=
 UserInputService.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then thDrag=false end end)
 thTrack.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 then thApply(i.Position.X) end end)
 
+-- Merge cap card
+local CapCard=Instance.new("Frame",PMerge)
+CapCard.Size=UDim2.new(1,-10,0,60); CapCard.BackgroundColor3=C.card
+CapCard.BorderSizePixel=0; CapCard.LayoutOrder=3
+Instance.new("UICorner",CapCard).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",CapCard).Color=C.border
+local capTitle=Instance.new("TextLabel",CapCard)
+capTitle.Text="Merge Up To Tier"; capTitle.Size=UDim2.new(1,-190,0,20); capTitle.Position=UDim2.new(0,14,0,6)
+capTitle.BackgroundTransparency=1; capTitle.TextColor3=C.text; capTitle.Font=Enum.Font.GothamBold; capTitle.TextSize=13
+capTitle.TextXAlignment=Enum.TextXAlignment.Left
+local capSub=Instance.new("TextLabel",CapCard)
+capSub.Text="Applies to all selected pets"; capSub.Size=UDim2.new(1,-190,0,14); capSub.Position=UDim2.new(0,14,0,29)
+capSub.BackgroundTransparency=1; capSub.TextColor3=C.sub; capSub.Font=Enum.Font.Gotham; capSub.TextSize=10
+capSub.TextXAlignment=Enum.TextXAlignment.Left
+local capMinus=Instance.new("TextButton",CapCard)
+capMinus.Text="−"; capMinus.Size=UDim2.new(0,30,0,30); capMinus.Position=UDim2.new(1,-176,0.5,-15)
+capMinus.BackgroundColor3=Color3.fromRGB(35,60,95); capMinus.TextColor3=Color3.fromRGB(240,248,255)
+capMinus.Font=Enum.Font.GothamBold; capMinus.TextSize=20; capMinus.BorderSizePixel=0
+Instance.new("UICorner",capMinus).CornerRadius=UDim.new(0,8)
+local capMinusStroke=Instance.new("UIStroke",capMinus)
+capMinusStroke.Color=Color3.fromRGB(95,145,220); capMinusStroke.Thickness=1
+local capValue=Instance.new("TextLabel",CapCard)
+capValue.Size=UDim2.new(0,108,0,30); capValue.Position=UDim2.new(1,-142,0.5,-15)
+capValue.BackgroundColor3=Color3.fromRGB(18,32,54); capValue.TextColor3=Color3.fromRGB(175,230,255)
+capValue.Font=Enum.Font.GothamBold; capValue.TextSize=12
+capValue.BorderSizePixel=0
+capValue.TextTruncate=Enum.TextTruncate.AtEnd
+Instance.new("UICorner",capValue).CornerRadius=UDim.new(0,8)
+local capValueStroke=Instance.new("UIStroke",capValue)
+capValueStroke.Color=Color3.fromRGB(85,140,220); capValueStroke.Thickness=1
+local capPlus=Instance.new("TextButton",CapCard)
+capPlus.Text="+"; capPlus.Size=UDim2.new(0,30,0,30); capPlus.Position=UDim2.new(1,-34,0.5,-15)
+capPlus.BackgroundColor3=Color3.fromRGB(35,60,95); capPlus.TextColor3=Color3.fromRGB(240,248,255)
+capPlus.Font=Enum.Font.GothamBold; capPlus.TextSize=18; capPlus.BorderSizePixel=0
+Instance.new("UICorner",capPlus).CornerRadius=UDim.new(0,8)
+local capPlusStroke=Instance.new("UIStroke",capPlus)
+capPlusStroke.Color=Color3.fromRGB(95,145,220); capPlusStroke.Thickness=1
+
+local function capDisplayText()
+    return getTierLabel(mergeMaxTier)
+end
+local function setMergeMaxTierValue(v)
+    mergeMaxTier=math.clamp(math.floor(v),0,7)
+    capValue.Text=capDisplayText()
+    saveSettings()
+    if updateChainPreview then
+        local firstSel=""; for n,_ in pairs(mergeTargets) do firstSel=n; break end
+        updateChainPreview(firstSel)
+    end
+end
+setMergeMaxTierValue(mergeMaxTier)
+capMinus.MouseButton1Click:Connect(function() setMergeMaxTierValue(mergeMaxTier-1) end)
+capPlus.MouseButton1Click:Connect(function() setMergeMaxTierValue(mergeMaxTier+1) end)
+
 -- Pet search + list
 local SearchCard=Instance.new("Frame",PMerge)
 SearchCard.Size=UDim2.new(1,-10,0,38); SearchCard.BackgroundColor3=C.card
-SearchCard.BorderSizePixel=0; SearchCard.LayoutOrder=5
+SearchCard.BorderSizePixel=0; SearchCard.LayoutOrder=4
 Instance.new("UICorner",SearchCard).CornerRadius=UDim.new(0,10)
 Instance.new("UIStroke",SearchCard).Color=C.border
 local SearchIcon=Instance.new("TextLabel",SearchCard)
@@ -837,7 +866,7 @@ Instance.new("UICorner",RefreshBtn2).CornerRadius=UDim.new(0,6)
 
 local PetListCard=Instance.new("Frame",PMerge)
 PetListCard.Size=UDim2.new(1,-10,0,200); PetListCard.BackgroundColor3=C.card
-PetListCard.BorderSizePixel=0; PetListCard.LayoutOrder=6; PetListCard.ClipsDescendants=true
+PetListCard.BorderSizePixel=0; PetListCard.LayoutOrder=5; PetListCard.ClipsDescendants=true
 Instance.new("UICorner",PetListCard).CornerRadius=UDim.new(0,10)
 Instance.new("UIStroke",PetListCard).Color=C.border
 
@@ -859,8 +888,8 @@ PetLayout.Padding=UDim.new(0,3); PetLayout.SortOrder=Enum.SortOrder.LayoutOrder
 
 -- Chain preview card
 local ChainCard=Instance.new("Frame",PMerge)
-ChainCard.Size=UDim2.new(1,-10,0,150); ChainCard.BackgroundColor3=C.card
-ChainCard.BorderSizePixel=0; ChainCard.LayoutOrder=7
+ChainCard.Size=UDim2.new(1,-10,0,290); ChainCard.BackgroundColor3=C.card
+ChainCard.BorderSizePixel=0; ChainCard.LayoutOrder=6
 Instance.new("UICorner",ChainCard).CornerRadius=UDim.new(0,10)
 Instance.new("UIStroke",ChainCard).Color=C.border
 local ChainTitle=Instance.new("TextLabel",ChainCard)
@@ -868,11 +897,14 @@ ChainTitle.Text="MERGE CHAIN  (last selected)"; ChainTitle.Size=UDim2.new(1,-10,
 ChainTitle.BackgroundTransparency=1; ChainTitle.TextColor3=C.sub
 ChainTitle.Font=Enum.Font.GothamBold; ChainTitle.TextSize=8; ChainTitle.TextXAlignment=Enum.TextXAlignment.Left
 
-local tierColors={C.text,C.green,C.accent,C.gold}
-local tierBg={Color3.fromRGB(18,22,32),Color3.fromRGB(8,28,16),Color3.fromRGB(6,22,38),Color3.fromRGB(30,24,8)}
-local tierLabels={"Base","Giant","Mega","Titan"}
+local tierColors={C.text,C.green,C.accent,C.gold,C.purple,C.green,C.accent,C.gold}
+local tierBg={
+    Color3.fromRGB(18,22,32), Color3.fromRGB(8,28,16),  Color3.fromRGB(6,22,38),  Color3.fromRGB(30,24,8),
+    Color3.fromRGB(24,12,32), Color3.fromRGB(10,30,18), Color3.fromRGB(8,24,42),  Color3.fromRGB(34,28,10)
+}
+local tierLabels={"Base","Giant","Mega","Titan","Sparking","S. Giant","S. Mega","S. Titan"}
 local tierRows={}
-for i=0,3 do
+for i=0,7 do
     local row=Instance.new("Frame",ChainCard)
     row.Size=UDim2.new(1,-20,0,26); row.Position=UDim2.new(0,10,0,22+i*30)
     row.BackgroundColor3=tierBg[i+1]; row.BorderSizePixel=0
@@ -901,17 +933,17 @@ end
 
 updateChainPreview=function(base)
     if base=="" then
-        for i=0,3 do tierRows[i].name.Text="—"; tierRows[i].count.Text="x0" end
+        for i=0,7 do tierRows[i].name.Text="—"; tierRows[i].count.Text="x0" end
         MSChain.Text="Chain: —"; return
     end
     local dInv=getDInv()
-    for i=0,3 do
+    for i=0,7 do
         local name=getTierName(base,i)
         local cnt=0
         if dInv then local iv=dInv:FindFirstChild(name) if iv then cnt=iv.Value end end
         tierRows[i].name.Text=name; tierRows[i].count.Text="x"..cnt
     end
-    MSChain.Text="Chain: "..base.." → Giant → Mega → Titan"
+    MSChain.Text="Chain: "..base.." → Giant → Mega → Titan → Sparking → Sparking Giant → Sparking Mega → Sparking Titan  (cap: "..getTierLabel(mergeMaxTier)..")"
 end
 
 local petBtns={}
@@ -933,8 +965,8 @@ local function refreshPetHighlights()
         end
     end
     local names={}; for n,_ in pairs(mergeTargets) do names[#names+1]=n end
-    MSStatus.Text=(states.mergeActive and "ON" or "OFF").." · "..(count==0 and "No targets" or count.." selected: "..table.concat(names,", "))
-    SLbl.Text=count.." merge target(s) selected"; saveSettings()
+    MSStatus.Text=(states.mergeActive and "ON" or "OFF").." · "..(count==0 and "No targets" or count.." selected: "..table.concat(names,", ")).." · Up to "..getTierLabel(mergeMaxTier)
+    SLbl.Text=count.." merge target(s) selected · up to "..getTierLabel(mergeMaxTier); saveSettings()
 end
 local function toggleBasePet(base)
     if mergeTargets[base] then mergeTargets[base]=nil else mergeTargets[base]=true end
@@ -944,7 +976,7 @@ buildPetList=function(filter)
     for _,c in pairs(PetScroll:GetChildren()) do if c:IsA("TextButton") or c:IsA("Frame") then c:Destroy() end end
     petBtns={}
     local dInv=getDInv(); if not dInv then PHLbl.Text="DoodleInv not found"; return end
-    local prefixes={"Giant ","Mega ","Titan ","Sparking "}
+    local prefixes={"Sparking Titan ","Sparking Mega ","Sparking Giant ","Sparking ","Titan ","Mega ","Giant "}
     local baseSet={}
     local f=(filter or "")
     local fLower=(f~="" and f:lower() or "")
@@ -1009,10 +1041,50 @@ local function makeMergePayload(petName)
     return {["1"]=petName,["2"]=petName,["3"]=petName,["4"]=petName}
 end
 
+local function tryConfirmSparkingMerge()
+    local ok, confirm = pcall(function()
+        return LP.PlayerGui.ScreenGui.MergeSparkingConfirmation.Confirm
+    end)
+    if not ok or not confirm then return false end
+    if not confirm.Visible then return false end
+    if confirm.AbsoluteSize.X <= 0 or confirm.AbsoluteSize.Y <= 0 then return false end
+
+    local clicked = false
+
+    -- Method 1: Activate (cleanest)
+    pcall(function() confirm:Activate(); clicked = true end)
+
+    -- Method 2: firesignal
+    if firesignal then
+        pcall(function() firesignal(confirm.MouseButton1Click); clicked = true end)
+        pcall(function() firesignal(confirm.Activated); clicked = true end)
+    end
+
+    -- Method 3: VirtualInputManager pixel click (fallback)
+    if not clicked then
+        pcall(function()
+            local vim  = game:GetService("VirtualInputManager")
+            local pos  = confirm.AbsolutePosition
+            local size = confirm.AbsoluteSize
+            local x    = math.floor(pos.X + size.X * 0.5)
+            local y    = math.floor(pos.Y + size.Y * 0.5)
+            vim:SendMouseButtonEvent(x, y, 0, true,  game, 0)
+            task.wait(0.05)
+            vim:SendMouseButtonEvent(x, y, 0, false, game, 0)
+            clicked = true
+        end)
+    end
+
+    return clicked
+end
+
 local function getActiveMergeTier()
     local dInv=getDInv(); if not dInv then return nil,nil end
+    if mergeMaxTier<=0 then return nil,nil,nil end
+    local topTier=math.min(mergeMaxTier-1,6)
+    if topTier<0 then return nil,nil,nil end
     for base,_ in pairs(mergeTargets) do
-        for tier=0,2 do
+        for tier=topTier,0,-1 do
             local name=getTierName(base,tier)
             local iv=dInv:FindFirstChild(name); local cnt=iv and iv.Value or 0
             if cnt>=mergeThreshold then return name,tier,base end
@@ -1037,25 +1109,32 @@ task.spawn(function()
                 pcall(function() SquadUpdate:FireServer(squad) end); task.wait(0.3)
                 local ok,err=pcall(function() RemoteMerge:InvokeServer(squad) end)
                 if not ok then MSStatus.Text="❌ RemoteMerge: "..tostring(err) end
+                if ok and tier==3 and mergeMaxTier>=4 then
+                    for _=1,25 do
+                        if tryConfirmSparkingMerge() then break end
+                        task.wait(0.1)
+                    end
+                end
                 task.wait(0.4)
                 buildPetList(SearchBox.Text)
             else
                 local names={}; for n,_ in pairs(mergeTargets) do names[#names+1]=n end
-                MSStatus.Text="⏳ Waiting · "..table.concat(names,", ").." (need x"..mergeThreshold..")"
+                MSStatus.Text="⏳ Waiting · "..table.concat(names,", ").." (need x"..mergeThreshold.." up to "..getTierLabel(mergeMaxTier)..")"
                 task.wait(2)
             end
         else task.wait(0.5) end
-        if states.autoMergeTitan then
-            local dInv=getDInv()
-            local titanCount=dInv and dInv:FindFirstChild("Titan Basic") and dInv:FindFirstChild("Titan Basic").Value or 0
-            if titanCount>=4 then
-                SLbl.Text="✨ Merging Titan Basic → Sparkling..."
-                local squad=makeMergePayload("Titan Basic")
-                pcall(function() SquadUpdate:FireServer(squad) end); task.wait(0.3)
-                local ok2,err2=pcall(function() RemoteMerge:InvokeServer(squad) end)
-                SLbl.Text=ok2 and "✨ Sparkling Basic merged!" or "❌ Sparkling merge failed: "..tostring(err2)
-                task.wait(0.5)
-            end
+    end
+end)
+
+-- Keep watching for the Sparking confirmation popup while merge is active.
+task.spawn(function()
+    while true do
+        if RUN_GEN~=_G.AniPixels_RunGen then break end
+        if states.mergeActive and mergeMaxTier>=4 then
+            local clicked=tryConfirmSparkingMerge()
+            task.wait(clicked and 0.25 or 0.08)
+        else
+            task.wait(0.2)
         end
     end
 end)
