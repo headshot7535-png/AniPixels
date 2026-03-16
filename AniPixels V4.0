@@ -17,7 +17,7 @@ local function httpRequest(opts)
 end
 
 -- ── Load NexusLib (local file or URL) ─────────────────────────
--- Use "NexusLib.lua" in your executor script folder, or set URL to your hosted NexusLib (e.g. v1.1 with MergeTab).
+-- Use "NexusLib.lua" in your executor script folder, or set URL to your hosted NexusLib v1.2.
 local NEXUSLIB_URL = "https://raw.githubusercontent.com/headshot7535-png/Nexuslib/main/Nexuslib"
 local Lib
 if readfile and pcall then
