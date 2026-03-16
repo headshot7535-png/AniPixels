@@ -1959,12 +1959,53 @@ end -- dragon tab UI
 local function sendWebhook()
     if WEBHOOK_URL=="" then return end
     pcall(function()
-        local HS=game:GetService("HttpService"); local plr=LP.Name; local uid=tostring(LP.UserId)
-        local placeId=tostring(game.PlaceId); local server=game.JobId~="" and game.JobId:sub(1,8).."…" or "Studio"
+        local HS=game:GetService("HttpService")
+        local plr=LP.Name
+        local uid=tostring(LP.UserId)
+        local placeId=tostring(game.PlaceId)
+        local server=game.JobId~="" and game.JobId:sub(1,8).."…" or "Studio"
         local isRe=_G.AniPixelsRunning and true or false
-        local active={}; for k,v in pairs(states) do if v==true then active[#active+1]=k end end; table.sort(active)
+
+        local active={}
+        for k,v in pairs(states) do if v==true then active[#active+1]=k end end
+        table.sort(active)
         local toggleStr=#active>0 and ("`"..table.concat(active,"` `").."`") or "*none*"
-        httpRequest({Url=WEBHOOK_URL,Method="POST",Headers={["Content-Type"]="application/json"},Body=HS:JSONEncode({username="AniPixels",avatar_url="https://tr.rbxcdn.com/30DAY-AvatarHeadshot/"..uid.."/150/150/png/noFilter",embeds={{author={name=plr.."  •  "..uid,icon_url="https://tr.rbxcdn.com/30DAY-AvatarHeadshot/"..uid.."/150/150/png/noFilter"},title=isRe and "♻️  Script Re-Executed" or "🚀  Script Executed",color=isRe and 0xFF8C00 or 0x5865F2,fields={{name="👤  Player",value="`"..plr.."`",inline=true},{name="🆔  User ID",value="`"..uid.."`",inline=true},{name="🌐  Place ID",value="`"..placeId.."`",inline=true},{name="🖥️  Server",value="`"..server.."`",inline=true},{name="⚙️  Active Features",value=toggleStr,inline=false}},thumbnail={url="https://tr.rbxcdn.com/30DAY-AvatarHeadshot/"..uid.."/150/150/png/noFilter"},footer={text="AniPixels v5.0  •  Place "..placeId,icon_url="https://www.roblox.com/favicon.ico"}}}})})
+
+        local mergeCount=0; for _ in pairs(mergeTargets) do mergeCount=mergeCount+1 end
+        local farmCount=0; for _ in pairs(farmTargets) do farmCount=farmCount+1 end
+        local doorCount=0; for _ in pairs(selectedDoors) do doorCount=doorCount+1 end
+        local missingIndex=countMissingIndexTargets()
+        local prioText=modePriorityText()
+
+        local fields={
+            {name="👤  Player",value="`"..plr.."`",inline=true},
+            {name="🆔  User ID",value="`"..uid.."`",inline=true},
+            {name="🌐  Place ID",value="`"..placeId.."`",inline=true},
+            {name="🖥️  Server",value="`"..server.."`",inline=true},
+            {name="⚙️  Active Features",value=toggleStr,inline=false},
+            {name="🥇 Priority Order",value="`"..prioText.."`",inline=false},
+            {name="🎯 Target Counts",value=string.format("Merge `%d` • Farm `%d` • Doors `%d`",mergeCount,farmCount,doorCount),inline=false},
+            {name="📚 Index Progress",value=string.format("Missing `%d` from discovered list",missingIndex),inline=false},
+            {name="🔧 Merge Config",value=string.format("Threshold `x%d` • Cap `%s`",mergeThreshold,getTierLabel(mergeMaxTier)),inline=false},
+        }
+
+        httpRequest({
+            Url=WEBHOOK_URL,
+            Method="POST",
+            Headers={["Content-Type"]="application/json"},
+            Body=HS:JSONEncode({
+                username="AniPixels",
+                avatar_url="https://tr.rbxcdn.com/30DAY-AvatarHeadshot/"..uid.."/150/150/png/noFilter",
+                embeds={{
+                    author={name=plr.."  •  "..uid,icon_url="https://tr.rbxcdn.com/30DAY-AvatarHeadshot/"..uid.."/150/150/png/noFilter"},
+                    title=isRe and "♻️  Script Re-Executed" or "🚀  Script Executed",
+                    color=isRe and 0xFF8C00 or 0x5865F2,
+                    fields=fields,
+                    thumbnail={url="https://tr.rbxcdn.com/30DAY-AvatarHeadshot/"..uid.."/150/150/png/noFilter"},
+                    footer={text="AniPixels v5.0  •  Place "..placeId,icon_url="https://www.roblox.com/favicon.ico"}
+                }}
+            })
+        })
     end)
 end
 _G.AniPixelsRunning=true
