@@ -91,7 +91,7 @@ local states = {
     farmNoTP=false, bossNoTP=false, farmActive=false,
     trialsActive=false, trialsNoTP=false, trialsNoLeave=false,
     serverHop=false, dragonBall=false, doorUnlock=false,
-    fastForward=false, autoReExec=false,
+    fastForward=false, autoReExec=false, autoPVP=false,
 }
 local walkSpeed      = 16
 local hopDelay       = 10
@@ -367,6 +367,9 @@ local ffToggle = FTab:Toggle("⚡ x4 Battle Speed","Sets FastForward to 0.25",st
         game:GetService("ReplicatedStorage"):WaitForChild("State"):WaitForChild("FastForward").Value = on and 0.25 or 1
     end)
 end)
+FTab:Toggle("🥊 Auto PVP","Repeatedly fires RemotePVP",states.autoPVP,function(on)
+    states.autoPVP=on; saveSettings()
+end)
 if states.fastForward then
     task.defer(function()
         pcall(function()
@@ -423,6 +426,7 @@ end)
 -- ============================================================
 local RequestBattle = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RequestBattle")
 local SquadUpdate = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("SquadUpdate")
+local RemotePVP = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RemotePVP")
 
 -- Team manager helpers
 local function readEquippedPets()
@@ -1697,6 +1701,25 @@ task.spawn(function()
         if states.antiAfk then
             pcall(function() VirtualUser:CaptureController(); VirtualUser:ClickButton2(Vector2.new()) end)
             local r=getRoot(); if r then r.CFrame=r.CFrame*CFrame.new(0,0,0.001) end
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if RUN_GEN~=_G.AniPixels_RunGen then break end
+        if states.autoPVP and not isInBattle() then
+            applyPresetTeam("PVP")
+            task.wait(0.15)
+            local ok,err=pcall(function() RemotePVP:FireServer() end)
+            if not ok then
+                SLbl.Text="❌ RemotePVP: "..tostring(err)
+                task.wait(1.2)
+            else
+                task.wait(0.8)
+            end
+        else
+            task.wait(0.3)
         end
     end
 end)
