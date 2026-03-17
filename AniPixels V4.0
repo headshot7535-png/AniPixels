@@ -1894,13 +1894,27 @@ local function tryAutoMergeIndexVariants(ownedName)
         if hasG and hasM and hasT then
             continue
         end
+        local baseCount=getInvCountByName(base)
+        local giantCount=getInvCountByName("Giant "..base)
+        local megaCount=getInvCountByName("Mega "..base)
         local mergeName=nil
-        if not hasG and getInvCountByName(base)>=5 then
+        -- Build toward the highest missing variant, keeping 1 copy via x5 threshold.
+        if not hasT then
+            if megaCount>=5 then
+                mergeName="Mega "..base
+            elseif giantCount>=5 then
+                mergeName="Giant "..base
+            elseif baseCount>=5 then
+                mergeName=base
+            end
+        elseif not hasM then
+            if giantCount>=5 then
+                mergeName="Giant "..base
+            elseif baseCount>=5 then
+                mergeName=base
+            end
+        elseif not hasG and baseCount>=5 then
             mergeName=base
-        elseif not hasM and getInvCountByName("Giant "..base)>=5 then
-            mergeName="Giant "..base
-        elseif not hasT and getInvCountByName("Mega "..base)>=5 then
-            mergeName="Mega "..base
         end
         if mergeName then
             local squad=makeMergePayload(mergeName)
