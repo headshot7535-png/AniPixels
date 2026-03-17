@@ -1884,6 +1884,7 @@ end)
 
 -- Auto Farm Index loop (farms pets you do not own yet)
 local farmIndexMissingPos=1
+local farmIndexFocusBase=nil
 local function tryAutoMergeIndexVariants(ownedName)
     if not states.indexTrackVariants then return false end
     for _,base in ipairs(petNameList) do
@@ -1936,16 +1937,34 @@ task.spawn(function()
             _missingIndexAt=os.clock()
             _missingIndexCount=#missing
             if #missing==0 then
+                farmIndexFocusBase=nil
                 SLbl.Text="📚 Index complete: all discovered pets owned"
                 task.wait(2)
             else
-                if farmIndexMissingPos>#missing then farmIndexMissingPos=1 end
-                local need=missing[farmIndexMissingPos]
+                local need=nil
+                if states.indexTrackVariants then
+                    if farmIndexFocusBase then
+                        for _,m in ipairs(missing) do
+                            if m.base==farmIndexFocusBase then need=m break end
+                        end
+                    end
+                    if not need then
+                        need=missing[1]
+                        farmIndexFocusBase=need and need.base or nil
+                    end
+                else
+                    if farmIndexMissingPos>#missing then farmIndexMissingPos=1 end
+                    need=missing[farmIndexMissingPos]
+                    farmIndexMissingPos=farmIndexMissingPos+1
+                end
                 local target=need.base
-                farmIndexMissingPos=farmIndexMissingPos+1
+                local needPos=1
+                for i,m in ipairs(missing) do
+                    if m==need then needPos=i break end
+                end
                 local campFolder=petToCampaign[target]
                 if campFolder and campFolder~="" then
-                    SLbl.Text="📚 Index Farm "..(farmIndexMissingPos-1).."/"..#missing..": "..(need.need or target)
+                    SLbl.Text="📚 Index Farm "..needPos.."/"..#missing..": "..(need.need or target)
                     applyPresetTeam("Farm"); task.wait(0.2)
                     local battleModel=findCampaignModelForPet(target)
                     if battleModel then
@@ -1977,6 +1996,9 @@ task.spawn(function()
                         task.wait(0.5)
                     end
                 else
+                    if states.indexTrackVariants then
+                        farmIndexFocusBase=nil
+                    end
                     task.wait(0.4)
                 end
                 task.wait(1)
