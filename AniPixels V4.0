@@ -341,6 +341,7 @@ local MTab    = Win:Tab("🔀",  "Merge")
 local FarmTab = Win:Tab("🌾",  "Farm")
 local DTab    = Win:Tab("🐉",  "Dragon")
 local PrioTab = Win:Tab("🥇",  "Priority")
+local STab    = Win:Tab("📊",  "Status")
 
 Win:ChatTab()  -- built-in cross-server Firebase chat
 
@@ -352,6 +353,7 @@ local PMerge    = MTab._page
 local PFarm     = FarmTab._page
 local PDragon   = DTab._page
 local PPriority = PrioTab._page
+local PStatus   = STab._page
 
 local function modePriorityText()
     local t={}
@@ -775,6 +777,38 @@ end
 
 local _missingIndexCount=-1
 local _missingIndexAt=0
+local INDEX_PREFIXES={
+    "Titan Sparking ","Mega Sparking ","Giant Sparking ",
+    "Sparking Titan ","Sparking Mega ","Sparking Giant ",
+    "Sparking ","Titan ","Mega ","Giant ",
+}
+local function normalizeIndexBaseName(name)
+    local base=tostring(name or "")
+    local changed=true
+    while changed do
+        changed=false
+        for _,p in ipairs(INDEX_PREFIXES) do
+            if base:sub(1,#p)==p then
+                base=base:sub(#p+1)
+                changed=true
+                break
+            end
+        end
+    end
+    return base
+end
+local function getIndexBaseList()
+    local bases,seen={},{}
+    for _,n in ipairs(petNameList) do
+        local b=normalizeIndexBaseName(n)
+        if b~="" and not seen[b] then
+            seen[b]=true
+            bases[#bases+1]=b
+        end
+    end
+    table.sort(bases)
+    return bases
+end
 local function hasOwnedAnyTierFast(base, ownedName)
     return ownedName[base]
         or ownedName["Giant "..base]
@@ -809,7 +843,7 @@ end
 local function getMissingIndexEntries(ownedName)
     local missing={}
     if #petNameList==0 then refreshPetCampaignMap() end
-    for _,base in ipairs(petNameList) do
+    for _,base in ipairs(getIndexBaseList()) do
         if states.indexTrackVariants then
             if not ownedName[base] then missing[#missing+1]={need=base,base=base,tier=0} end
             if not ownedName["Giant "..base] then missing[#missing+1]={need="Giant "..base,base=base,tier=1} end
@@ -857,6 +891,103 @@ local function canRunMode(mode)
         end
     end
     return true
+end
+
+-- ============================================================
+--  STATUS TAB  — live telemetry
+-- ============================================================
+do
+STab:Section("Live Runtime")
+local statusLastError="None"
+STab:Button("🧹","Clear Last Error","Resets the status error tracker",C.accent,function()
+    statusLastError="None"
+end)
+local runtimeCard=Instance.new("Frame",PStatus)
+runtimeCard.Size=UDim2.new(1,-10,0,146); runtimeCard.BackgroundColor3=C.card; runtimeCard.BorderSizePixel=0; runtimeCard.LayoutOrder=120
+Instance.new("UICorner",runtimeCard).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",runtimeCard).Color=C.border
+local rtTitle=Instance.new("TextLabel",runtimeCard)
+rtTitle.Text="Runtime Snapshot"; rtTitle.Size=UDim2.new(1,-16,0,16); rtTitle.Position=UDim2.new(0,10,0,6)
+rtTitle.BackgroundTransparency=1; rtTitle.TextColor3=C.sub; rtTitle.Font=Enum.Font.GothamBold; rtTitle.TextSize=9; rtTitle.TextXAlignment=Enum.TextXAlignment.Left
+
+local function mkRtLine(y)
+    local l=Instance.new("TextLabel",runtimeCard)
+    l.Size=UDim2.new(1,-16,0,14); l.Position=UDim2.new(0,10,0,y)
+    l.BackgroundTransparency=1; l.TextColor3=C.text; l.Font=Enum.Font.Code; l.TextSize=9
+    l.TextXAlignment=Enum.TextXAlignment.Left
+    return l
+end
+local stNow=mkRtLine(24)
+local stMode=mkRtLine(40)
+local stBattle=mkRtLine(56)
+local stPrio=mkRtLine(72)
+local stTargets=mkRtLine(88)
+local stIndex=mkRtLine(104)
+local stPerf=mkRtLine(120)
+
+local logCard=Instance.new("Frame",PStatus)
+logCard.Size=UDim2.new(1,-10,0,118); logCard.BackgroundColor3=C.card; logCard.BorderSizePixel=0; logCard.LayoutOrder=200
+Instance.new("UICorner",logCard).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",logCard).Color=C.border
+local logTitle=Instance.new("TextLabel",logCard)
+logTitle.Text="Recent Actions"; logTitle.Size=UDim2.new(1,-16,0,16); logTitle.Position=UDim2.new(0,10,0,6)
+logTitle.BackgroundTransparency=1; logTitle.TextColor3=C.sub; logTitle.Font=Enum.Font.GothamBold; logTitle.TextSize=9; logTitle.TextXAlignment=Enum.TextXAlignment.Left
+local logLbl=Instance.new("TextLabel",logCard)
+logLbl.Size=UDim2.new(1,-16,1,-26); logLbl.Position=UDim2.new(0,10,0,22)
+logLbl.BackgroundTransparency=1; logLbl.TextColor3=C.text; logLbl.Font=Enum.Font.Code; logLbl.TextSize=9
+logLbl.TextXAlignment=Enum.TextXAlignment.Left; logLbl.TextYAlignment=Enum.TextYAlignment.Top
+logLbl.TextWrapped=true; logLbl.Text="(waiting for actions...)"
+
+local startedAt=os.clock()
+local lastNow=""
+local recent={}
+local function pushRecent(s)
+    if not s or s=="" then return end
+    if s==lastNow then return end
+    lastNow=s
+    if s:find("❌",1,true) or s:find("⚠",1,true) then
+        statusLastError=s
+    end
+    recent[#recent+1]=os.date("%H:%M:%S").."  "..s
+    if #recent>7 then table.remove(recent,1) end
+    logLbl.Text=table.concat(recent,"\n")
+end
+
+task.spawn(function()
+    while true do
+        if RUN_GEN~=_G.AniPixels_RunGen then break end
+        local current=tostring(SLbl and SLbl.Text or "Idle")
+        local activeMode="Idle"
+        for _,m in ipairs(modePriority) do
+            if isModeBlocking(m) then
+                activeMode=PRIORITY_LABELS[m] or m
+                break
+            end
+        end
+        local mergeCount=0; for _ in pairs(mergeTargets) do mergeCount=mergeCount+1 end
+        local farmCount=0; for _ in pairs(farmTargets) do farmCount=farmCount+1 end
+        local doorCount=0; for _ in pairs(selectedDoors) do doorCount=doorCount+1 end
+        local miss=countMissingIndexTargets()
+
+        stNow.Text="Now: "..current
+        stNow.TextColor3=(current:find("❌",1,true) and C.red) or (current:find("⚠",1,true) and C.orange) or (current:find("⏸",1,true) and C.gold) or C.text
+        stMode.Text="Active Priority Mode: "..activeMode
+        stMode.TextColor3=(activeMode=="Idle") and C.sub or C.accent
+        local inBattle=(isInBattle and isInBattle()) and true or false
+        stBattle.Text="Battle: "..(inBattle and "Yes" or "No")
+        stBattle.TextColor3=inBattle and C.green or C.sub
+        stPrio.Text="Priority: "..modePriorityText()
+        stPrio.TextColor3=C.text
+        stTargets.Text=string.format("Targets: Merge %d | Farm %d | Doors %d",mergeCount,farmCount,doorCount)
+        stTargets.TextColor3=C.text
+        stIndex.Text=string.format("Index: Missing %d%s | Last Error: %s",miss,states.indexTrackVariants and " (variants on)" or "",statusLastError)
+        stIndex.TextColor3=(statusLastError~="None") and C.red or C.text
+        stPerf.Text=string.format("Uptime: %ds",math.floor(os.clock()-startedAt))
+        stPerf.TextColor3=C.sub
+        pushRecent(current)
+        task.wait(0.5)
+    end
+end)
 end
 
 BTab:Toggle("🚫 Disable Boss TP","Don't teleport to boss before firing",states.bossNoTP,function(on)
@@ -1451,7 +1582,6 @@ task.spawn(function()
                 MSStatus.Text="🔀 Merging T"..tier.." "..petName.." (x"..cnt..")"
                 SLbl.Text="Merging: "..petName.." x"..cnt
                 local squad=makeMergePayload(petName)
-                pcall(function() SquadUpdate:FireServer(squad) end); task.wait(0.3)
                 local ok,err=pcall(function() RemoteMerge:InvokeServer(squad) end)
                 if not ok then MSStatus.Text="❌ RemoteMerge: "..tostring(err) end
                 if ok and tier==3 and mergeMaxTier>=4 then
@@ -1885,9 +2015,11 @@ end)
 -- Auto Farm Index loop (farms pets you do not own yet)
 local farmIndexMissingPos=1
 local farmIndexFocusBase=nil
+local indexRetryCount={}
+local indexSkipUntil={}
 local function tryAutoMergeIndexVariants(ownedName)
     if not states.indexTrackVariants then return false end
-    for _,base in ipairs(petNameList) do
+    for _,base in ipairs(getIndexBaseList()) do
         local hasG=ownedName["Giant "..base]
         local hasM=ownedName["Mega "..base]
         local hasT=ownedName["Titan "..base]
@@ -1917,8 +2049,10 @@ local function tryAutoMergeIndexVariants(ownedName)
             mergeName=base
         end
         if mergeName then
+            if mergeName:sub(1,6)=="Titan " then
+                continue
+            end
             local squad=makeMergePayload(mergeName)
-            pcall(function() SquadUpdate:FireServer(squad) end); task.wait(0.2)
             local ok=pcall(function() RemoteMerge:InvokeServer(squad) end)
             if ok then
                 SLbl.Text="🔀 Index merge x5: "..mergeName
@@ -1955,30 +2089,59 @@ task.spawn(function()
                 SLbl.Text="📚 Index complete: all discovered pets owned"
                 task.wait(2)
             else
+                local now=os.clock()
+                local function isSkipped(needObj)
+                    local k=(needObj.need or needObj.base or "")
+                    local untilAt=indexSkipUntil[k]
+                    return untilAt~=nil
+                end
                 local need=nil
                 if states.indexTrackVariants then
                     if farmIndexFocusBase then
                         for _,m in ipairs(missing) do
-                            if m.base==farmIndexFocusBase then need=m break end
+                            if m.base==farmIndexFocusBase and not isSkipped(m) then need=m break end
                         end
                     end
                     if not need then
-                        need=missing[1]
+                        for _,m in ipairs(missing) do
+                            if not isSkipped(m) then need=m break end
+                        end
+                    end
+                    if not need then
+                        task.wait(0.4)
+                        continue
+                    end
+                    if not farmIndexFocusBase or farmIndexFocusBase~=need.base then
                         farmIndexFocusBase=need and need.base or nil
                     end
                 else
                     if farmIndexMissingPos>#missing then farmIndexMissingPos=1 end
-                    need=missing[farmIndexMissingPos]
-                    farmIndexMissingPos=farmIndexMissingPos+1
+                    local tries=0
+                    while tries<#missing do
+                        local cand=missing[farmIndexMissingPos]
+                        farmIndexMissingPos=farmIndexMissingPos+1
+                        if farmIndexMissingPos>#missing then farmIndexMissingPos=1 end
+                        if cand and not isSkipped(cand) then
+                            need=cand
+                            break
+                        end
+                        tries=tries+1
+                    end
+                    if not need then
+                        task.wait(0.4)
+                        continue
+                    end
                 end
                 local target=need.base
                 local needPos=1
                 for i,m in ipairs(missing) do
                     if m==need then needPos=i break end
                 end
+                local needKey=(need.need or target)
+                local attempts=(indexRetryCount[needKey] or 0)
                 local campFolder=petToCampaign[target]
                 if campFolder and campFolder~="" then
-                    SLbl.Text="📚 Index Farm "..needPos.."/"..#missing..": "..(need.need or target)
+                    SLbl.Text="📚 Index Farm "..needPos.."/"..#missing..": "..needKey.."  (try "..(attempts+1).."/3)"
                     applyPresetTeam("Farm"); task.wait(0.2)
                     local battleModel=findCampaignModelForPet(target)
                     if battleModel then
@@ -2001,8 +2164,20 @@ task.spawn(function()
                                 task.wait(0.25)
                             end
                             if appeared then
+                                indexRetryCount[needKey]=0
                                 while isInBattle() and states.autoFarmIndex do
                                     task.wait(0.35)
+                                end
+                            else
+                                attempts=attempts+1
+                                indexRetryCount[needKey]=attempts
+                                if attempts>=3 then
+                                    indexRetryCount[needKey]=0
+                                    indexSkipUntil[needKey]=true
+                                    if states.indexTrackVariants and farmIndexFocusBase==need.base then
+                                        farmIndexFocusBase=nil
+                                    end
+                                    SLbl.Text="⏭ Skipping "..needKey.." permanently (3 no-battle fails)"
                                 end
                             end
                         end
@@ -2776,4 +2951,3 @@ task.spawn(function()
     end
 end)
 end -- auto re-exec do
-
