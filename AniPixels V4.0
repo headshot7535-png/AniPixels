@@ -89,7 +89,7 @@ local states = {
     autoAllForOne=false, autoDioHeaven=false, autoMadara=false,
     autoAreaBosses=false,
     mergeActive=false,
-    farmNoTP=false, bossNoTP=false, farmActive=false, autoFarmIndex=false,
+    farmNoTP=false, bossNoTP=false, farmActive=false, autoFarmIndex=false, indexTrackVariants=false,
     trialsActive=false, trialsNoTP=false, trialsNoLeave=false,
     serverHop=false, dragonBall=false, doorUnlock=false,
     fastForward=false, autoReExec=false, autoPVP=false,
@@ -800,19 +800,36 @@ local function buildOwnedNameSet()
     end
     return ownedName
 end
+local function getInvCountByName(name)
+    local dInv=getDInv()
+    if not dInv then return 0 end
+    local iv=dInv:FindFirstChild(name)
+    return iv and iv.Value or 0
+end
+local function getMissingIndexEntries(ownedName)
+    local missing={}
+    if #petNameList==0 then refreshPetCampaignMap() end
+    for _,base in ipairs(petNameList) do
+        if states.indexTrackVariants then
+            if not ownedName[base] then missing[#missing+1]={need=base,base=base,tier=0} end
+            if not ownedName["Giant "..base] then missing[#missing+1]={need="Giant "..base,base=base,tier=1} end
+            if not ownedName["Mega "..base] then missing[#missing+1]={need="Mega "..base,base=base,tier=2} end
+            if not ownedName["Titan "..base] then missing[#missing+1]={need="Titan "..base,base=base,tier=3} end
+        else
+            if not hasOwnedAnyTierFast(base,ownedName) then
+                missing[#missing+1]={need=base,base=base,tier=0}
+            end
+        end
+    end
+    return missing
+end
 local function countMissingIndexTargets()
     local now=os.clock()
     if now-_missingIndexAt<1 and _missingIndexCount>=0 then
         return _missingIndexCount
     end
-    if #petNameList==0 then refreshPetCampaignMap() end
     local ownedName=buildOwnedNameSet()
-    local missing=0
-    for _,petName in ipairs(petNameList) do
-        if not hasOwnedAnyTierFast(petName,ownedName) then
-            missing=missing+1
-        end
-    end
+    local missing=#getMissingIndexEntries(ownedName)
     _missingIndexAt=now
     _missingIndexCount=missing
     return missing
@@ -1611,9 +1628,63 @@ task.delay(0.5,function() for _,pd in ipairs(presetDefs) do refreshPresetSlotDis
 FarmTab:Toggle("🚫 Disable Teleport","Farm in-place · no auto TP",states.farmNoTP,function(on)
     states.farmNoTP=on; saveSettings()
 end)
-FarmTab:Toggle("📚 Auto Farm Index","Farm pets missing from your DoodleInv index",states.autoFarmIndex,function(on)
-    states.autoFarmIndex=on; saveSettings()
+do
+local idxRow=Instance.new("Frame",PFarm)
+idxRow.Size=UDim2.new(1,-10,0,54); idxRow.BackgroundTransparency=1; idxRow.LayoutOrder=4
+
+local idxCard=Instance.new("TextButton",idxRow)
+idxCard.Size=UDim2.new(0.5,-4,1,0); idxCard.Position=UDim2.new(0,0,0,0)
+idxCard.BackgroundColor3=C.card; idxCard.BorderSizePixel=0; idxCard.Text=""
+Instance.new("UICorner",idxCard).CornerRadius=UDim.new(0,10)
+local idxStroke=Instance.new("UIStroke",idxCard); idxStroke.Color=C.border
+local idxTitle=Instance.new("TextLabel",idxCard)
+idxTitle.Size=UDim2.new(1,-10,0,18); idxTitle.Position=UDim2.new(0,10,0,8)
+idxTitle.BackgroundTransparency=1; idxTitle.TextXAlignment=Enum.TextXAlignment.Left
+idxTitle.TextColor3=C.text; idxTitle.Font=Enum.Font.GothamBold; idxTitle.TextSize=10
+local idxSub=Instance.new("TextLabel",idxCard)
+idxSub.Size=UDim2.new(1,-10,0,12); idxSub.Position=UDim2.new(0,10,0,28)
+idxSub.BackgroundTransparency=1; idxSub.TextXAlignment=Enum.TextXAlignment.Left
+idxSub.TextColor3=C.sub; idxSub.Font=Enum.Font.Gotham; idxSub.TextSize=8
+
+local varCard=Instance.new("TextButton",idxRow)
+varCard.Size=UDim2.new(0.5,-4,1,0); varCard.Position=UDim2.new(0.5,4,0,0)
+varCard.BackgroundColor3=C.card; varCard.BorderSizePixel=0; varCard.Text=""
+Instance.new("UICorner",varCard).CornerRadius=UDim.new(0,10)
+local varStroke=Instance.new("UIStroke",varCard); varStroke.Color=C.border
+local varTitle=Instance.new("TextLabel",varCard)
+varTitle.Size=UDim2.new(1,-10,0,18); varTitle.Position=UDim2.new(0,10,0,8)
+varTitle.BackgroundTransparency=1; varTitle.TextXAlignment=Enum.TextXAlignment.Left
+varTitle.TextColor3=C.text; varTitle.Font=Enum.Font.GothamBold; varTitle.TextSize=10
+local varSub=Instance.new("TextLabel",varCard)
+varSub.Size=UDim2.new(1,-10,0,12); varSub.Position=UDim2.new(0,10,0,28)
+varSub.BackgroundTransparency=1; varSub.TextXAlignment=Enum.TextXAlignment.Left
+varSub.TextColor3=C.sub; varSub.Font=Enum.Font.Gotham; varSub.TextSize=8
+
+local function refreshIndexCards()
+    idxTitle.Text=(states.autoFarmIndex and "📚 Auto Farm Index  ON" or "📚 Auto Farm Index  OFF")
+    idxSub.Text="Farm missing DoodleInv index pets"
+    idxStroke.Color=states.autoFarmIndex and C.orange or C.border
+    idxCard.BackgroundColor3=states.autoFarmIndex and Color3.fromRGB(45,26,0) or C.card
+
+    varTitle.Text=(states.indexTrackVariants and "🧬 Variants  ON" or "🧬 Variants  OFF")
+    varSub.Text="Track Base + Giant + Mega + Titan"
+    varStroke.Color=states.indexTrackVariants and C.accent or C.border
+    varCard.BackgroundColor3=states.indexTrackVariants and Color3.fromRGB(0,22,36) or C.card
+end
+
+idxCard.MouseButton1Click:Connect(function()
+    states.autoFarmIndex=not states.autoFarmIndex
+    saveSettings()
+    refreshIndexCards()
 end)
+varCard.MouseButton1Click:Connect(function()
+    states.indexTrackVariants=not states.indexTrackVariants
+    _missingIndexAt=0
+    saveSettings()
+    refreshIndexCards()
+end)
+refreshIndexCards()
+end
 
 -- Door unlock
 local DOOR_CONFIG={}
@@ -1813,6 +1884,36 @@ end)
 
 -- Auto Farm Index loop (farms pets you do not own yet)
 local farmIndexMissingPos=1
+local function tryAutoMergeIndexVariants(ownedName)
+    if not states.indexTrackVariants then return false end
+    for _,base in ipairs(petNameList) do
+        local hasG=ownedName["Giant "..base]
+        local hasM=ownedName["Mega "..base]
+        local hasT=ownedName["Titan "..base]
+        if hasG and hasM and hasT then
+            continue
+        end
+        local mergeName=nil
+        if not hasG and getInvCountByName(base)>=5 then
+            mergeName=base
+        elseif not hasM and getInvCountByName("Giant "..base)>=5 then
+            mergeName="Giant "..base
+        elseif not hasT and getInvCountByName("Mega "..base)>=5 then
+            mergeName="Mega "..base
+        end
+        if mergeName then
+            local squad=makeMergePayload(mergeName)
+            pcall(function() SquadUpdate:FireServer(squad) end); task.wait(0.2)
+            local ok=pcall(function() RemoteMerge:InvokeServer(squad) end)
+            if ok then
+                SLbl.Text="🔀 Index merge x5: "..mergeName
+                task.wait(0.35)
+                return true
+            end
+        end
+    end
+    return false
+end
 task.spawn(function()
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
@@ -1825,14 +1926,13 @@ task.spawn(function()
                 task.wait(0.8)
                 continue
             end
-            if #petNameList==0 then refreshPetCampaignMap() end
             local ownedName=buildOwnedNameSet()
-            local missing={}
-            for _,petName in ipairs(petNameList) do
-                if not hasOwnedAnyTierFast(petName,ownedName) then
-                    missing[#missing+1]=petName
-                end
+            local merged=tryAutoMergeIndexVariants(ownedName)
+            if merged then
+                _missingIndexAt=0
+                ownedName=buildOwnedNameSet()
             end
+            local missing=getMissingIndexEntries(ownedName)
             _missingIndexAt=os.clock()
             _missingIndexCount=#missing
             if #missing==0 then
@@ -1840,11 +1940,12 @@ task.spawn(function()
                 task.wait(2)
             else
                 if farmIndexMissingPos>#missing then farmIndexMissingPos=1 end
-                local target=missing[farmIndexMissingPos]
+                local need=missing[farmIndexMissingPos]
+                local target=need.base
                 farmIndexMissingPos=farmIndexMissingPos+1
                 local campFolder=petToCampaign[target]
                 if campFolder and campFolder~="" then
-                    SLbl.Text="📚 Index Farm "..(farmIndexMissingPos-1).."/"..#missing..": "..target
+                    SLbl.Text="📚 Index Farm "..(farmIndexMissingPos-1).."/"..#missing..": "..(need.need or target)
                     applyPresetTeam("Farm"); task.wait(0.2)
                     local battleModel=findCampaignModelForPet(target)
                     if battleModel then
