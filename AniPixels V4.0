@@ -765,6 +765,19 @@ local RAID_BOSS_BY_TOGGLE={
     autoDioHeaven="Dio Over Heaven",
     autoMadara="Madara Ten Tails",
 }
+local AREA_INDEX_NAMES={
+    ["Pain"]=true,
+    ["Kars"]=true,
+    ["Final Form Muzan"]=true,
+    ["Awakened Mahito"]=true,
+}
+local function getIndexTeamKeyForTarget(targetName)
+    if AREA_INDEX_NAMES[targetName] then return "AreaBosses" end
+    for _,raidName in pairs(RAID_BOSS_BY_TOGGLE) do
+        if raidName==targetName then return "Raid" end
+    end
+    return "Farm"
+end
 local function hasAliveSelectedRaidBoss()
     if not anyRaidBossEnabled() then return false end
     for key,path in pairs(RAID_BOSS_BY_TOGGLE) do
@@ -2146,7 +2159,7 @@ task.spawn(function()
                 local campFolder=petToCampaign[target]
                 if campFolder and campFolder~="" then
                     SLbl.Text="📚 Index Farm "..needPos.."/"..#missing..": "..needKey.."  (try "..(attempts+1).."/3)"
-                    applyPresetTeam("Farm"); task.wait(0.2)
+                    applyPresetTeam(getIndexTeamKeyForTarget(target)); task.wait(0.2)
                     local battleModel=findCampaignModelForPet(target)
                     if battleModel then
                         if isInBattle() then
@@ -2955,3 +2968,4 @@ task.spawn(function()
     end
 end)
 end -- auto re-exec do
+
