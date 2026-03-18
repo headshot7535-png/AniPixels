@@ -771,6 +771,13 @@ local AREA_INDEX_NAMES={
     ["Final Form Muzan"]=true,
     ["Awakened Mahito"]=true,
 }
+local function isExcludedIndexTarget(targetName)
+    if AREA_INDEX_NAMES[targetName] then return true end
+    for _,raidName in pairs(RAID_BOSS_BY_TOGGLE) do
+        if raidName==targetName then return true end
+    end
+    return false
+end
 local function getIndexTeamKeyForTarget(targetName)
     if AREA_INDEX_NAMES[targetName] then return "AreaBosses" end
     for _,raidName in pairs(RAID_BOSS_BY_TOGGLE) do
@@ -857,6 +864,9 @@ local function getMissingIndexEntries(ownedName)
     local missing={}
     if #petNameList==0 then refreshPetCampaignMap() end
     for _,base in ipairs(getIndexBaseList()) do
+        if isExcludedIndexTarget(base) then
+            continue
+        end
         if states.indexTrackVariants then
             if not ownedName[base] then missing[#missing+1]={need=base,base=base,tier=0} end
             if not ownedName["Giant "..base] then missing[#missing+1]={need="Giant "..base,base=base,tier=1} end
@@ -2033,6 +2043,9 @@ local indexSkipUntil={}
 local function tryAutoMergeIndexVariants(ownedName)
     if not states.indexTrackVariants then return false end
     for _,base in ipairs(getIndexBaseList()) do
+        if isExcludedIndexTarget(base) then
+            continue
+        end
         local hasG=ownedName["Giant "..base]
         local hasM=ownedName["Mega "..base]
         local hasT=ownedName["Titan "..base]
