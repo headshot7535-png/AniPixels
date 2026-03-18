@@ -2093,6 +2093,10 @@ task.spawn(function()
                 local function isSkipped(needObj)
                     local k=(needObj.need or needObj.base or "")
                     local untilAt=indexSkipUntil[k]
+                    if untilAt and untilAt<=now then
+                        indexSkipUntil[k]=nil
+                        return false
+                    end
                     return untilAt~=nil
                 end
                 local need=nil
@@ -2173,11 +2177,11 @@ task.spawn(function()
                                 indexRetryCount[needKey]=attempts
                                 if attempts>=3 then
                                     indexRetryCount[needKey]=0
-                                    indexSkipUntil[needKey]=true
+                                    indexSkipUntil[needKey]=os.clock()+12
                                     if states.indexTrackVariants and farmIndexFocusBase==need.base then
                                         farmIndexFocusBase=nil
                                     end
-                                    SLbl.Text="⏭ Skipping "..needKey.." permanently (3 no-battle fails)"
+                                    SLbl.Text="⏭ Skipping "..needKey.." for 12s (3 no-battle fails)"
                                 end
                             end
                         end
