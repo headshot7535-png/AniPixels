@@ -670,6 +670,11 @@ local function findCampaignModelForPet(petName)
     end)
     return result
 end
+local function isPetSpawnedInModel(model, petName)
+    if not (model and model.Parent and petName and petName~="") then return false end
+    local pets=model:FindFirstChild("Pets")
+    return (pets and pets:FindFirstChild(petName)~=nil) and true or false
+end
 
 local function findTrialsModel()
     local result=nil
@@ -2056,6 +2061,11 @@ task.spawn(function()
                         applyPresetTeam("Farm"); task.wait(0.2)
                         local battleModel=findCampaignModelForPet(target)
                         if battleModel then
+                            if not isPetSpawnedInModel(battleModel,target) then
+                                FSStatus.Text="⏭ Despawned: "..target
+                                task.wait(0.6)
+                                return
+                            end
                             FSStatus.Text="⚔ "..target.." ("..battleModel.Name..")"; SLbl.Text="Farm: "..target
                             if not states.farmNoTP then
                                 pcall(function()
@@ -2063,6 +2073,11 @@ task.spawn(function()
                                     local pos=battleModel:GetModelCFrame().Position
                                     if (root.Position-pos).Magnitude>30 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
                                 end)
+                            end
+                            if not isPetSpawnedInModel(battleModel,target) then
+                                FSStatus.Text="⏭ Despawned mid-move: "..target
+                                task.wait(0.6)
+                                return
                             end
                             pcall(function() RequestBattle:FireServer(battleModel) end)
                         else FSStatus.Text="⚠ No model found for: "..target; task.wait(2) end
@@ -2108,18 +2123,18 @@ local function findSafariSparkingModel()
     end
     return nil,nil
 end
-local function markIndexNoBattleFail(needKey, needObj)
-    local c=(indexRetryCount[needKey] or 0)+1
-    indexRetryCount[needKey]=c
+local function markIndexNoBattleFail(failKey, showKey, needObj)
+    local c=(indexRetryCount[failKey] or 0)+1
+    indexRetryCount[failKey]=c
     if c>=3 then
-        indexRetryCount[needKey]=0
-        indexSkipUntil[needKey]=os.clock()+12
+        indexRetryCount[failKey]=0
+        indexSkipUntil[failKey]=os.clock()+12
         if states.indexTrackVariants and farmIndexFocusBase==needObj.base then
             farmIndexFocusBase=nil
         end
-        SLbl.Text="⏭ Skipping "..needKey.." for 12s (3 no-battle fails)"
+        SLbl.Text="⏭ Skipping "..showKey.." for 12s (3 no-battle fails)"
     else
-        SLbl.Text="📚 No battle for "..needKey.." ("..c.."/3)"
+        SLbl.Text="📚 No battle for "..showKey.." ("..c.."/3)"
     end
 end
 local function tryAutoMergeIndexVariants(ownedName)
@@ -2200,13 +2215,19 @@ task.spawn(function()
                 else
                     local now=os.clock()
                     local function isSkipped(needObj)
-                        local k=(needObj.need or needObj.base or "")
-                        local untilAt=indexSkipUntil[k]
-                        if untilAt and untilAt<=now then
-                            indexSkipUntil[k]=nil
-                            return false
+                        local keyVariant=(needObj.need or needObj.base or "")
+                        local keyBase=(needObj.base or "")
+                        local untilVariant=indexSkipUntil[keyVariant]
+                        if untilVariant and untilVariant<=now then
+                            indexSkipUntil[keyVariant]=nil
+                            untilVariant=nil
                         end
-                        return untilAt~=nil
+                        local untilBase=indexSkipUntil[keyBase]
+                        if untilBase and untilBase<=now then
+                            indexSkipUntil[keyBase]=nil
+                            untilBase=nil
+                        end
+                        return untilVariant~=nil or untilBase~=nil
                     end
                     local need=nil
                     if states.indexTrackVariants then
@@ -2251,13 +2272,23 @@ task.spawn(function()
                         if m==need then needPos=i break end
                     end
                     local needKey=(need.need or target)
-                    local attempts=(indexRetryCount[needKey] or 0)
+                    local failKey=target -- battle request is always on base target
+                    local attempts=(indexRetryCount[failKey] or 0)
                     local campFolder=petToCampaign[target]
                     if campFolder and campFolder~="" then
                         SLbl.Text="📚 Index Farm "..needPos.."/"..#missing..": "..needKey.."  (try "..(attempts+1).."/3)"
                         applyPresetTeam(getIndexTeamKeyForTarget(target)); task.wait(0.2)
                         local battleModel=findCampaignModelForPet(target)
                         if battleModel then
+                            if not isPetSpawnedInModel(battleModel,target) then
+                                indexSkipUntil[failKey]=os.clock()+4
+                                if states.indexTrackVariants and farmIndexFocusBase==target then
+                                    farmIndexFocusBase=nil
+                                end
+                                SLbl.Text="⏭ Despawned: "..needKey.." (skip 4s)"
+                                task.wait(0.4)
+                                return
+                            end
                             if isInBattle() then
                                 task.wait(0.8)
                                 return
@@ -2269,6 +2300,15 @@ task.spawn(function()
                                     if (root.Position-pos).Magnitude>30 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
                                 end)
                             end
+                            if not isPetSpawnedInModel(battleModel,target) then
+                                indexSkipUntil[failKey]=os.clock()+4
+                                if states.indexTrackVariants and farmIndexFocusBase==target then
+                                    farmIndexFocusBase=nil
+                                end
+                                SLbl.Text="⏭ Despawned mid-move: "..needKey.." (skip 4s)"
+                                task.wait(0.4)
+                                return
+                            end
                             if not isInBattle() then
                                 pcall(function() RequestBattle:FireServer(battleModel) end)
                                 local appeared=false
@@ -2277,12 +2317,12 @@ task.spawn(function()
                                     task.wait(0.25)
                                 end
                                 if appeared then
-                                    indexRetryCount[needKey]=0
+                                    indexRetryCount[failKey]=0
                                     while isInBattle() and states.autoFarmIndex do
                                         task.wait(0.35)
                                     end
                                 else
-                                    markIndexNoBattleFail(needKey, need)
+                                    markIndexNoBattleFail(failKey, needKey, need)
                                 end
                             end
                         else
