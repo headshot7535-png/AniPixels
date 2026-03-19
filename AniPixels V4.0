@@ -2040,6 +2040,20 @@ local farmIndexMissingPos=1
 local farmIndexFocusBase=nil
 local indexRetryCount={}
 local indexSkipUntil={}
+local function markIndexNoBattleFail(needKey, needObj)
+    local c=(indexRetryCount[needKey] or 0)+1
+    indexRetryCount[needKey]=c
+    if c>=3 then
+        indexRetryCount[needKey]=0
+        indexSkipUntil[needKey]=os.clock()+12
+        if states.indexTrackVariants and farmIndexFocusBase==needObj.base then
+            farmIndexFocusBase=nil
+        end
+        SLbl.Text="⏭ Skipping "..needKey.." for 12s (3 no-battle fails)"
+    else
+        SLbl.Text="📚 No battle for "..needKey.." ("..c.."/3)"
+    end
+end
 local function tryAutoMergeIndexVariants(ownedName)
     if not states.indexTrackVariants then return false end
     for _,base in ipairs(getIndexBaseList()) do
@@ -2199,16 +2213,7 @@ task.spawn(function()
                                     task.wait(0.35)
                                 end
                             else
-                                attempts=attempts+1
-                                indexRetryCount[needKey]=attempts
-                                if attempts>=3 then
-                                    indexRetryCount[needKey]=0
-                                    indexSkipUntil[needKey]=os.clock()+12
-                                    if states.indexTrackVariants and farmIndexFocusBase==need.base then
-                                        farmIndexFocusBase=nil
-                                    end
-                                    SLbl.Text="⏭ Skipping "..needKey.." for 12s (3 no-battle fails)"
-                                end
+                                markIndexNoBattleFail(needKey, need)
                             end
                         end
                     else
