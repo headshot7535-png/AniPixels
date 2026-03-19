@@ -1622,32 +1622,39 @@ end
 task.spawn(function()
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
-        local anyTarget=next(mergeTargets)~=nil
-        if states.mergeActive and anyTarget then
-            local petName,tier,activeBase=getActiveMergeTier()
-            if petName then
-                local dInv=getDInv()
-                local iv=dInv and dInv:FindFirstChild(petName)
-                local cnt=iv and iv.Value or 0
-                MSStatus.Text="🔀 Merging T"..tier.." "..petName.." (x"..cnt..")"
-                SLbl.Text="Merging: "..petName.." x"..cnt
-                local squad=makeMergePayload(petName)
-                local ok,err=pcall(function() RemoteMerge:InvokeServer(squad) end)
-                if not ok then MSStatus.Text="❌ RemoteMerge: "..tostring(err) end
-                if ok and tier==3 and mergeMaxTier>=4 then
-                    for _=1,25 do
-                        if tryConfirmSparkingMerge() then break end
-                        task.wait(0.1)
+        local loopOk,loopErr=pcall(function()
+            local anyTarget=next(mergeTargets)~=nil
+            if states.mergeActive and anyTarget then
+                local petName,tier,activeBase=getActiveMergeTier()
+                if petName then
+                    local dInv=getDInv()
+                    local iv=dInv and dInv:FindFirstChild(petName)
+                    local cnt=iv and iv.Value or 0
+                    MSStatus.Text="🔀 Merging T"..tier.." "..petName.." (x"..cnt..")"
+                    SLbl.Text="Merging: "..petName.." x"..cnt
+                    local squad=makeMergePayload(petName)
+                    local ok,err=pcall(function() RemoteMerge:InvokeServer(squad) end)
+                    if not ok then MSStatus.Text="❌ RemoteMerge: "..tostring(err) end
+                    if ok and tier==3 and mergeMaxTier>=4 then
+                        for _=1,25 do
+                            if tryConfirmSparkingMerge() then break end
+                            task.wait(0.1)
+                        end
                     end
+                    task.wait(0.4)
+                    buildPetList(SearchBox.Text)
+                else
+                    local names={}; for n,_ in pairs(mergeTargets) do names[#names+1]=n end
+                    MSStatus.Text="⏳ Waiting · "..table.concat(names,", ").." (need x"..mergeThreshold.." up to "..getTierLabel(mergeMaxTier)..")"
+                    task.wait(2)
                 end
-                task.wait(0.4)
-                buildPetList(SearchBox.Text)
-            else
-                local names={}; for n,_ in pairs(mergeTargets) do names[#names+1]=n end
-                MSStatus.Text="⏳ Waiting · "..table.concat(names,", ").." (need x"..mergeThreshold.." up to "..getTierLabel(mergeMaxTier)..")"
-                task.wait(2)
-            end
-        else task.wait(0.5) end
+            else task.wait(0.5) end
+        end)
+        if not loopOk then
+            statusLastError="MergeLoop: "..tostring(loopErr):sub(1,80)
+            pcall(function() SLbl.Text="⚠ Merge error (recovering): "..tostring(loopErr):sub(1,50) end)
+            task.wait(2)
+        end
     end
 end)
 
@@ -2027,41 +2034,48 @@ task.spawn(function()
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
         if not FSBattle or not FSBattle.Parent then break end
-        if states.farmActive then
-            if not canRunMode("AutoFarm") then
-                FSStatus.Text="⏸ Paused by priority"
-                task.wait(0.6)
-                continue
-            end
-            local inBattle=isInBattle()
-            if inBattle then pcall(function() FSBattle.Text="● In battle"; FSBattle.TextColor3=C.green end); task.wait(2)
-            else
-                FSBattle.Text="● Not in battle"; FSBattle.TextColor3=C.sub
-                farmTargetList={}; for n,_ in pairs(farmTargets) do table.insert(farmTargetList,n) end
-                if #farmTargetList==0 then FSStatus.Text="ON · No targets selected"; task.wait(2)
-                else
-                    if farmIndex>#farmTargetList then farmIndex=1 end
-                    local target=farmTargetList[farmIndex]; farmIndex=farmIndex+1
-                    local campFolder=petToCampaign[target]
-                    if not campFolder or campFolder=="" then FSStatus.Text="⚠ No campaign found for: "..target; task.wait(2); continue end
-                    FSStatus.Text="⚔ "..target.." ("..campFolder..")"; SLbl.Text="Farm: "..target
-                    applyPresetTeam("Farm"); task.wait(0.2)
-                    local battleModel=findCampaignModelForPet(target)
-                    if battleModel then
-                        FSStatus.Text="⚔ "..target.." ("..battleModel.Name..")"; SLbl.Text="Farm: "..target
-                        if not states.farmNoTP then
-                            pcall(function()
-                                local root=getRoot(); if not root then return end
-                                local pos=battleModel:GetModelCFrame().Position
-                                if (root.Position-pos).Magnitude>30 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
-                            end)
-                        end
-                        pcall(function() RequestBattle:FireServer(battleModel) end)
-                    else FSStatus.Text="⚠ No model found for: "..target; task.wait(2) end
-                    task.wait(1)
+        local loopOk,loopErr=pcall(function()
+            if states.farmActive then
+                if not canRunMode("AutoFarm") then
+                    FSStatus.Text="⏸ Paused by priority"
+                    task.wait(0.6)
+                    return
                 end
-            end
-        else FSBattle.Text="● Not in battle"; FSBattle.TextColor3=C.sub; task.wait(0.5) end
+                local inBattle=isInBattle()
+                if inBattle then pcall(function() FSBattle.Text="● In battle"; FSBattle.TextColor3=C.green end); task.wait(2)
+                else
+                    FSBattle.Text="● Not in battle"; FSBattle.TextColor3=C.sub
+                    farmTargetList={}; for n,_ in pairs(farmTargets) do table.insert(farmTargetList,n) end
+                    if #farmTargetList==0 then FSStatus.Text="ON · No targets selected"; task.wait(2)
+                    else
+                        if farmIndex>#farmTargetList then farmIndex=1 end
+                        local target=farmTargetList[farmIndex]; farmIndex=farmIndex+1
+                        local campFolder=petToCampaign[target]
+                        if not campFolder or campFolder=="" then FSStatus.Text="⚠ No campaign found for: "..target; task.wait(2); return end
+                        FSStatus.Text="⚔ "..target.." ("..campFolder..")"; SLbl.Text="Farm: "..target
+                        applyPresetTeam("Farm"); task.wait(0.2)
+                        local battleModel=findCampaignModelForPet(target)
+                        if battleModel then
+                            FSStatus.Text="⚔ "..target.." ("..battleModel.Name..")"; SLbl.Text="Farm: "..target
+                            if not states.farmNoTP then
+                                pcall(function()
+                                    local root=getRoot(); if not root then return end
+                                    local pos=battleModel:GetModelCFrame().Position
+                                    if (root.Position-pos).Magnitude>30 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
+                                end)
+                            end
+                            pcall(function() RequestBattle:FireServer(battleModel) end)
+                        else FSStatus.Text="⚠ No model found for: "..target; task.wait(2) end
+                        task.wait(1)
+                    end
+                end
+            else FSBattle.Text="● Not in battle"; FSBattle.TextColor3=C.sub; task.wait(0.5) end
+        end)
+        if not loopOk then
+            statusLastError="FarmLoop: "..tostring(loopErr):sub(1,80)
+            pcall(function() SLbl.Text="⚠ Farm error (recovering): "..tostring(loopErr):sub(1,50) end)
+            task.wait(2)
+        end
     end
 end)
 
@@ -2160,129 +2174,136 @@ end
 task.spawn(function()
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
-        if states.autoFarmIndex then
-            if not canRunMode("AutoFarmIndex") then
-                task.wait(0.6)
-                continue
-            end
-            if isInBattle() then
-                task.wait(0.8)
-                continue
-            end
-            local ownedName=buildOwnedNameSet()
-            local merged=tryAutoMergeIndexVariants(ownedName)
-            if merged then
-                _missingIndexAt=0
-                ownedName=buildOwnedNameSet()
-            end
-            local missing=getMissingIndexEntries(ownedName)
-            _missingIndexAt=os.clock()
-            _missingIndexCount=#missing
-            if #missing==0 then
-                farmIndexFocusBase=nil
-                SLbl.Text="📚 Index complete: all discovered pets owned"
-                task.wait(2)
-            else
-                local now=os.clock()
-                local function isSkipped(needObj)
-                    local k=(needObj.need or needObj.base or "")
-                    local untilAt=indexSkipUntil[k]
-                    if untilAt and untilAt<=now then
-                        indexSkipUntil[k]=nil
-                        return false
-                    end
-                    return untilAt~=nil
+        local loopOk,loopErr=pcall(function()
+            if states.autoFarmIndex then
+                if not canRunMode("AutoFarmIndex") then
+                    task.wait(0.6)
+                    return
                 end
-                local need=nil
-                if states.indexTrackVariants then
-                    if farmIndexFocusBase then
-                        for _,m in ipairs(missing) do
-                            if m.base==farmIndexFocusBase and not isSkipped(m) then need=m break end
-                        end
-                    end
-                    if not need then
-                        for _,m in ipairs(missing) do
-                            if not isSkipped(m) then need=m break end
-                        end
-                    end
-                    if not need then
-                        task.wait(0.4)
-                        continue
-                    end
-                    if not farmIndexFocusBase or farmIndexFocusBase~=need.base then
-                        farmIndexFocusBase=need and need.base or nil
-                    end
+                if isInBattle() then
+                    task.wait(0.8)
+                    return
+                end
+                local ownedName=buildOwnedNameSet()
+                local merged=tryAutoMergeIndexVariants(ownedName)
+                if merged then
+                    _missingIndexAt=0
+                    ownedName=buildOwnedNameSet()
+                end
+                local missing=getMissingIndexEntries(ownedName)
+                _missingIndexAt=os.clock()
+                _missingIndexCount=#missing
+                if #missing==0 then
+                    farmIndexFocusBase=nil
+                    SLbl.Text="📚 Index complete: all discovered pets owned"
+                    task.wait(2)
                 else
-                    if farmIndexMissingPos>#missing then farmIndexMissingPos=1 end
-                    local tries=0
-                    while tries<#missing do
-                        local cand=missing[farmIndexMissingPos]
-                        farmIndexMissingPos=farmIndexMissingPos+1
-                        if farmIndexMissingPos>#missing then farmIndexMissingPos=1 end
-                        if cand and not isSkipped(cand) then
-                            need=cand
-                            break
+                    local now=os.clock()
+                    local function isSkipped(needObj)
+                        local k=(needObj.need or needObj.base or "")
+                        local untilAt=indexSkipUntil[k]
+                        if untilAt and untilAt<=now then
+                            indexSkipUntil[k]=nil
+                            return false
                         end
-                        tries=tries+1
+                        return untilAt~=nil
                     end
-                    if not need then
-                        task.wait(0.4)
-                        continue
-                    end
-                end
-                local target=need.base
-                local needPos=1
-                for i,m in ipairs(missing) do
-                    if m==need then needPos=i break end
-                end
-                local needKey=(need.need or target)
-                local attempts=(indexRetryCount[needKey] or 0)
-                local campFolder=petToCampaign[target]
-                if campFolder and campFolder~="" then
-                    SLbl.Text="📚 Index Farm "..needPos.."/"..#missing..": "..needKey.."  (try "..(attempts+1).."/3)"
-                    applyPresetTeam(getIndexTeamKeyForTarget(target)); task.wait(0.2)
-                    local battleModel=findCampaignModelForPet(target)
-                    if battleModel then
-                        if isInBattle() then
-                            task.wait(0.8)
-                            continue
-                        end
-                        if not states.farmNoTP then
-                            pcall(function()
-                                local root=getRoot(); if not root then return end
-                                local pos=battleModel:GetModelCFrame().Position
-                                if (root.Position-pos).Magnitude>30 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
-                            end)
-                        end
-                        if not isInBattle() then
-                            pcall(function() RequestBattle:FireServer(battleModel) end)
-                            local appeared=false
-                            for _=1,8 do
-                                if isInBattle() then appeared=true break end
-                                task.wait(0.25)
+                    local need=nil
+                    if states.indexTrackVariants then
+                        if farmIndexFocusBase then
+                            for _,m in ipairs(missing) do
+                                if m.base==farmIndexFocusBase and not isSkipped(m) then need=m break end
                             end
-                            if appeared then
-                                indexRetryCount[needKey]=0
-                                while isInBattle() and states.autoFarmIndex do
-                                    task.wait(0.35)
-                                end
-                            else
-                                markIndexNoBattleFail(needKey, need)
+                        end
+                        if not need then
+                            for _,m in ipairs(missing) do
+                                if not isSkipped(m) then need=m break end
                             end
+                        end
+                        if not need then
+                            task.wait(0.4)
+                            return
+                        end
+                        if not farmIndexFocusBase or farmIndexFocusBase~=need.base then
+                            farmIndexFocusBase=need and need.base or nil
                         end
                     else
-                        task.wait(0.5)
+                        if farmIndexMissingPos>#missing then farmIndexMissingPos=1 end
+                        local tries=0
+                        while tries<#missing do
+                            local cand=missing[farmIndexMissingPos]
+                            farmIndexMissingPos=farmIndexMissingPos+1
+                            if farmIndexMissingPos>#missing then farmIndexMissingPos=1 end
+                            if cand and not isSkipped(cand) then
+                                need=cand
+                                break
+                            end
+                            tries=tries+1
+                        end
+                        if not need then
+                            task.wait(0.4)
+                            return
+                        end
                     end
-                else
-                    if states.indexTrackVariants then
-                        farmIndexFocusBase=nil
+                    local target=need.base
+                    local needPos=1
+                    for i,m in ipairs(missing) do
+                        if m==need then needPos=i break end
                     end
-                    task.wait(0.4)
+                    local needKey=(need.need or target)
+                    local attempts=(indexRetryCount[needKey] or 0)
+                    local campFolder=petToCampaign[target]
+                    if campFolder and campFolder~="" then
+                        SLbl.Text="📚 Index Farm "..needPos.."/"..#missing..": "..needKey.."  (try "..(attempts+1).."/3)"
+                        applyPresetTeam(getIndexTeamKeyForTarget(target)); task.wait(0.2)
+                        local battleModel=findCampaignModelForPet(target)
+                        if battleModel then
+                            if isInBattle() then
+                                task.wait(0.8)
+                                return
+                            end
+                            if not states.farmNoTP then
+                                pcall(function()
+                                    local root=getRoot(); if not root then return end
+                                    local pos=battleModel:GetModelCFrame().Position
+                                    if (root.Position-pos).Magnitude>30 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
+                                end)
+                            end
+                            if not isInBattle() then
+                                pcall(function() RequestBattle:FireServer(battleModel) end)
+                                local appeared=false
+                                for _=1,8 do
+                                    if isInBattle() then appeared=true break end
+                                    task.wait(0.25)
+                                end
+                                if appeared then
+                                    indexRetryCount[needKey]=0
+                                    while isInBattle() and states.autoFarmIndex do
+                                        task.wait(0.35)
+                                    end
+                                else
+                                    markIndexNoBattleFail(needKey, need)
+                                end
+                            end
+                        else
+                            task.wait(0.5)
+                        end
+                    else
+                        if states.indexTrackVariants then
+                            farmIndexFocusBase=nil
+                        end
+                        task.wait(0.4)
+                    end
+                    task.wait(1)
                 end
-                task.wait(1)
+            else
+                task.wait(0.4)
             end
-        else
-            task.wait(0.4)
+        end)
+        if not loopOk then
+            statusLastError="IndexLoop: "..tostring(loopErr):sub(1,80)
+            pcall(function() SLbl.Text="⚠ Index error (recovering): "..tostring(loopErr):sub(1,50) end)
+            task.wait(2)
         end
     end
 end)
@@ -2291,49 +2312,56 @@ end)
 task.spawn(function()
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
-        if states.autoFarmSparking then
-            if not canRunMode("AutoFarmSparking") then
-                task.wait(0.6)
-                continue
-            end
-            if isInBattle() then
-                task.wait(0.8)
-                continue
-            end
-            local model,petName=findSafariSparkingModel()
-            if not model then
-                task.wait(1.0)
-                continue
-            end
-            SLbl.Text="✨ Safari Sparking found: "..petName
-            applyPresetTeam("Farm"); task.wait(0.2)
-            if not states.farmNoTP then
-                pcall(function()
-                    local root=getRoot(); if not root then return end
-                    local pos=model:GetModelCFrame().Position
-                    if (root.Position-pos).Magnitude>30 then
-                        root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
-                        task.wait(0.45)
-                    end
-                end)
-            end
-            if not isInBattle() then
-                pcall(function() RequestBattle:FireServer(model) end)
-                local appeared=false
-                for _=1,8 do
-                    if isInBattle() then appeared=true break end
-                    task.wait(0.25)
-                end
-                if appeared then
-                    while isInBattle() and states.autoFarmSparking do
-                        task.wait(0.35)
-                    end
-                else
+        local loopOk,loopErr=pcall(function()
+            if states.autoFarmSparking then
+                if not canRunMode("AutoFarmSparking") then
                     task.wait(0.6)
+                    return
                 end
+                if isInBattle() then
+                    task.wait(0.8)
+                    return
+                end
+                local model,petName=findSafariSparkingModel()
+                if not model then
+                    task.wait(1.0)
+                    return
+                end
+                SLbl.Text="✨ Safari Sparking found: "..petName
+                applyPresetTeam("Farm"); task.wait(0.2)
+                if not states.farmNoTP then
+                    pcall(function()
+                        local root=getRoot(); if not root then return end
+                        local pos=model:GetModelCFrame().Position
+                        if (root.Position-pos).Magnitude>30 then
+                            root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                            task.wait(0.45)
+                        end
+                    end)
+                end
+                if not isInBattle() then
+                    pcall(function() RequestBattle:FireServer(model) end)
+                    local appeared=false
+                    for _=1,8 do
+                        if isInBattle() then appeared=true break end
+                        task.wait(0.25)
+                    end
+                    if appeared then
+                        while isInBattle() and states.autoFarmSparking do
+                            task.wait(0.35)
+                        end
+                    else
+                        task.wait(0.6)
+                    end
+                end
+            else
+                task.wait(0.4)
             end
-        else
-            task.wait(0.4)
+        end)
+        if not loopOk then
+            statusLastError="SparkLoop: "..tostring(loopErr):sub(1,80)
+            pcall(function() SLbl.Text="⚠ Sparking error (recovering): "..tostring(loopErr):sub(1,50) end)
+            task.wait(2)
         end
     end
 end)
@@ -2592,18 +2620,25 @@ end)
 task.spawn(function()
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
-        if states.autoPVP and canRunMode("PVP") and not isInBattle() then
-            applyPresetTeam("PVP")
-            task.wait(0.15)
-            local ok,err=pcall(function() RemotePVP:FireServer() end)
-            if not ok then
-                SLbl.Text="❌ RemotePVP: "..tostring(err)
-                task.wait(1.2)
+        local loopOk,loopErr=pcall(function()
+            if states.autoPVP and canRunMode("PVP") and not isInBattle() then
+                applyPresetTeam("PVP")
+                task.wait(0.15)
+                local ok,err=pcall(function() RemotePVP:FireServer() end)
+                if not ok then
+                    SLbl.Text="❌ RemotePVP: "..tostring(err)
+                    task.wait(1.2)
+                else
+                    task.wait(0.8)
+                end
             else
-                task.wait(0.8)
+                task.wait(0.3)
             end
-        else
-            task.wait(0.3)
+        end)
+        if not loopOk then
+            statusLastError="PVPLoop: "..tostring(loopErr):sub(1,80)
+            pcall(function() SLbl.Text="⚠ PVP error (recovering): "..tostring(loopErr):sub(1,50) end)
+            task.wait(2)
         end
     end
 end)
@@ -2691,35 +2726,42 @@ end
 task.spawn(function()
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
-        if states.autoAreaBosses then
-            if not canRunMode("AreaBosses") then
-                SLbl.Text="⏸ Area Bosses paused by priority: "..modePriorityText()
-                task.wait(0.6)
-            elseif isInBattle() then
-                SLbl.Text="⏳ In battle, waiting (Area Bosses)"
-                task.wait(1.2)
-            else
-                local model,name=getActiveAreaBossModel()
-                if not model then
-                    SLbl.Text="⏳ Waiting for Area Boss spawn..."
-                    task.wait(1)
+        local loopOk,loopErr=pcall(function()
+            if states.autoAreaBosses then
+                if not canRunMode("AreaBosses") then
+                    SLbl.Text="⏸ Area Bosses paused by priority: "..modePriorityText()
+                    task.wait(0.6)
+                elseif isInBattle() then
+                    SLbl.Text="⏳ In battle, waiting (Area Bosses)"
+                    task.wait(1.2)
                 else
-                    applyPresetTeam("AreaBosses"); task.wait(0.2)
-                    if not states.bossNoTP then
-                        pcall(function()
-                            local root=getRoot(); if root then
-                                local pos=model:GetModelCFrame().Position
-                                if (root.Position-pos).Magnitude>50 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
-                            end
-                        end)
+                    local model,name=getActiveAreaBossModel()
+                    if not model then
+                        SLbl.Text="⏳ Waiting for Area Boss spawn..."
+                        task.wait(1)
+                    else
+                        applyPresetTeam("AreaBosses"); task.wait(0.2)
+                        if not states.bossNoTP then
+                            pcall(function()
+                                local root=getRoot(); if root then
+                                    local pos=model:GetModelCFrame().Position
+                                    if (root.Position-pos).Magnitude>50 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
+                                end
+                            end)
+                        end
+                        pcall(function() RequestBattle:FireServer(model) end)
+                        SLbl.Text="👑 Area Boss: "..name
+                        task.wait(2)
                     end
-                    pcall(function() RequestBattle:FireServer(model) end)
-                    SLbl.Text="👑 Area Boss: "..name
-                    task.wait(2)
                 end
+            else
+                task.wait(0.25)
             end
-        else
-            task.wait(0.25)
+        end)
+        if not loopOk then
+            statusLastError="AreaBossLoop: "..tostring(loopErr):sub(1,80)
+            pcall(function() SLbl.Text="⚠ Area Boss error (recovering): "..tostring(loopErr):sub(1,50) end)
+            task.wait(2)
         end
     end
 end)
@@ -2729,35 +2771,42 @@ local function bossLoop(key,path)
         local myGen=RUN_GEN
         while true do
             if myGen~=_G.AniPixels_RunGen then break end
-            if states[key] then
-                if not canRunMode("RaidBosses") then SLbl.Text="⏸ Raid Bosses paused by priority: "..modePriorityText(); task.wait(0.6)
-                elseif isInBattle() then SLbl.Text="⏳ In battle, waiting: "..path; task.wait(2)
-                elseif not isBossPresent(path) then SLbl.Text="⏳ Boss not found: "..path; task.wait(1)
-                else
-                    applyPresetTeam("Raid"); task.wait(0.2)
-                    local bossModel=nil
-                    pcall(function()
-                        local campaign=workspace:WaitForChild("Campaign",3)
-                        bossModel=campaign and campaign:FindFirstChild(path)
-                    end)
-                    if bossModel then
-                        if not states.bossNoTP then
-                            pcall(function()
-                                local root=getRoot(); if root then
-                                    local pos=bossModel:GetModelCFrame().Position
-                                    if (root.Position-pos).Magnitude>50 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
-                                end
-                            end)
-                        end
-                        pcall(function() RequestBattle:FireServer(bossModel) end); SLbl.Text="⚔ Fired: "..path
-                        task.wait(8)
-                        if states[key] and not isInBattle() and isBossPresent(path) and not isBossDead(path) then
-                            pcall(function() RequestBattle:FireServer(bossModel) end); SLbl.Text="🔁 Re-fired: "..path
-                        end
-                    else SLbl.Text="⚠ Boss model not found: "..path end
-                    task.wait(autoFightDelay)
-                end
-            else task.wait(0.2) end
+            local loopOk,loopErr=pcall(function()
+                if states[key] then
+                    if not canRunMode("RaidBosses") then SLbl.Text="⏸ Raid Bosses paused by priority: "..modePriorityText(); task.wait(0.6)
+                    elseif isInBattle() then SLbl.Text="⏳ In battle, waiting: "..path; task.wait(2)
+                    elseif not isBossPresent(path) then SLbl.Text="⏳ Boss not found: "..path; task.wait(1)
+                    else
+                        applyPresetTeam("Raid"); task.wait(0.2)
+                        local bossModel=nil
+                        pcall(function()
+                            local campaign=workspace:WaitForChild("Campaign",3)
+                            bossModel=campaign and campaign:FindFirstChild(path)
+                        end)
+                        if bossModel then
+                            if not states.bossNoTP then
+                                pcall(function()
+                                    local root=getRoot(); if root then
+                                        local pos=bossModel:GetModelCFrame().Position
+                                        if (root.Position-pos).Magnitude>50 then root.CFrame=CFrame.new(pos+Vector3.new(0,5,0)); task.wait(0.5) end
+                                    end
+                                end)
+                            end
+                            pcall(function() RequestBattle:FireServer(bossModel) end); SLbl.Text="⚔ Fired: "..path
+                            task.wait(8)
+                            if states[key] and not isInBattle() and isBossPresent(path) and not isBossDead(path) then
+                                pcall(function() RequestBattle:FireServer(bossModel) end); SLbl.Text="🔁 Re-fired: "..path
+                            end
+                        else SLbl.Text="⚠ Boss model not found: "..path end
+                        task.wait(autoFightDelay)
+                    end
+                else task.wait(0.2) end
+            end)
+            if not loopOk then
+                statusLastError="RaidLoop("..path.."): "..tostring(loopErr):sub(1,60)
+                pcall(function() SLbl.Text="⚠ Raid error (recovering): "..tostring(loopErr):sub(1,50) end)
+                task.wait(2)
+            end
         end
     end)
 end
@@ -2772,77 +2821,84 @@ local BattleResult=game:GetService("ReplicatedStorage"):WaitForChild("Events"):W
 task.spawn(function()
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
-        if not states.trialsActive then task.wait(0.3); continue end
-        if not canRunMode("Trials") then
-            TSLbl.Text="⏸ Paused by priority"
-            task.wait(0.6)
-            continue
-        end
-        TSLbl.Text="▶ Starting trial session..."
-        local startOk,startErr=pcall(function() TrialsMode:FireServer({Start=true}) end)
-        if not startOk then TSLbl.Text="❌ TrialsMode: "..tostring(startErr); task.wait(2); continue end
-        local battleModel=nil
-        for _=1,6 do battleModel=findTrialsModel(); if battleModel then break end; task.wait(0.5) end
-        if not battleModel then TSLbl.Text="⚠ No cooler model found after 3s"; task.wait(2); continue end
-        local coolerIndex=1; pcall(function() coolerIndex=battleModel:GetAttribute("CoolerIndex") or 1 end)
-        applyPresetTeam("Trials"); task.wait(0.2)
-        if not states.trialsNoTP then
-            pcall(function()
-                local root=getRoot(); if not root then return end
-                local hrp=battleModel:FindFirstChild("HumanoidRootPart")
-                local pos=hrp and hrp.Position or battleModel:GetModelCFrame().Position
-                root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
-            end); task.wait(0.3)
-        end
-        local waveLabel=nil
-        do
-            local sg=playerGui:FindFirstChild("ScreenGui")
-            local tf=sg and sg:FindFirstChild("Trials")
-            waveLabel=tf and tf:FindFirstChild("WaveLabel")
-        end
-        local function getWave()
-            local wl=waveLabel
-            if not (wl and wl.Parent) then return 0 end
-            local n=tonumber((wl.ContentText or ""):match("%d+"))
-            return n or 0
-        end
-        local currentWave=getWave(); local sessionAlive=true
-        local lastTp=0
-        while states.trialsActive and sessionAlive do
-            if RUN_GEN~=_G.AniPixels_RunGen then break end
+        local loopOk,loopErr=pcall(function()
+            if not states.trialsActive then task.wait(0.3); return end
+            if not canRunMode("Trials") then
+                TSLbl.Text="⏸ Paused by priority"
+                task.wait(0.6)
+                return
+            end
+            TSLbl.Text="▶ Starting trial session..."
+            local startOk,startErr=pcall(function() TrialsMode:FireServer({Start=true}) end)
+            if not startOk then TSLbl.Text="❌ TrialsMode: "..tostring(startErr); task.wait(2); return end
+            local battleModel=nil
+            for _=1,6 do battleModel=findTrialsModel(); if battleModel then break end; task.wait(0.5) end
+            if not battleModel then TSLbl.Text="⚠ No cooler model found after 3s"; task.wait(2); return end
+            local coolerIndex=1; pcall(function() coolerIndex=battleModel:GetAttribute("CoolerIndex") or 1 end)
+            applyPresetTeam("Trials"); task.wait(0.2)
             if not states.trialsNoTP then
-                local now=os.clock()
-                if now-lastTp>2 then
-                    lastTp=now
-                    pcall(function()
-                        local root=getRoot(); if not root then return end
-                        local hrp=battleModel:FindFirstChild("HumanoidRootPart")
-                        local pos=hrp and hrp.Position or battleModel:GetModelCFrame().Position
-                        if (root.Position-pos).Magnitude>25 then
-                            root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
-                        end
-                    end)
-                end
+                pcall(function()
+                    local root=getRoot(); if not root then return end
+                    local hrp=battleModel:FindFirstChild("HumanoidRootPart")
+                    local pos=hrp and hrp.Position or battleModel:GetModelCFrame().Position
+                    root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                end); task.wait(0.3)
             end
-            currentWave=getWave()
-            TSLbl.Text="⚔ Wave "..currentWave.."/"..(states.trialsNoLeave and "∞" or tostring(leaveWave))
-            if not states.trialsNoLeave and currentWave>=leaveWave then
-                TSLbl.Text="🚪 Leaving at Wave "..currentWave.."..."
-                pcall(function() TrialsMode:FireServer({Exit=true}) end); task.wait(1.5); sessionAlive=false; break
+            local waveLabel=nil
+            do
+                local sg=playerGui:FindFirstChild("ScreenGui")
+                local tf=sg and sg:FindFirstChild("Trials")
+                waveLabel=tf and tf:FindFirstChild("WaveLabel")
             end
-            pcall(function() RequestBattle:FireServer(nil,coolerIndex) end)
-            local appeared=false
-            for _=1,10 do task.wait(0.5); if isInBattle() then appeared=true; break end end
-            if appeared then
-                local t=0
-                while isInBattle() and states.trialsActive do
-                    if RUN_GEN~=_G.AniPixels_RunGen then break end
-                    task.wait(0.3); t=t+0.3; if t>300 then sessionAlive=false; break end
+            local function getWave()
+                local wl=waveLabel
+                if not (wl and wl.Parent) then return 0 end
+                local n=tonumber((wl.ContentText or ""):match("%d+"))
+                return n or 0
+            end
+            local currentWave=getWave(); local sessionAlive=true
+            local lastTp=0
+            while states.trialsActive and sessionAlive do
+                if RUN_GEN~=_G.AniPixels_RunGen then break end
+                if not states.trialsNoTP then
+                    local now=os.clock()
+                    if now-lastTp>2 then
+                        lastTp=now
+                        pcall(function()
+                            local root=getRoot(); if not root then return end
+                            local hrp=battleModel:FindFirstChild("HumanoidRootPart")
+                            local pos=hrp and hrp.Position or battleModel:GetModelCFrame().Position
+                            if (root.Position-pos).Magnitude>25 then
+                                root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                            end
+                        end)
+                    end
                 end
-                if trialsDelay>0 then TSLbl.Text="⏳ Spawning... ("..trialsDelay.."s)"; task.wait(trialsDelay) end
-            else TSLbl.Text="⚠ Battle didn't appear, retrying..."; task.wait(trialsRetryDelay) end
+                currentWave=getWave()
+                TSLbl.Text="⚔ Wave "..currentWave.."/"..(states.trialsNoLeave and "∞" or tostring(leaveWave))
+                if not states.trialsNoLeave and currentWave>=leaveWave then
+                    TSLbl.Text="🚪 Leaving at Wave "..currentWave.."..."
+                    pcall(function() TrialsMode:FireServer({Exit=true}) end); task.wait(1.5); sessionAlive=false; break
+                end
+                pcall(function() RequestBattle:FireServer(nil,coolerIndex) end)
+                local appeared=false
+                for _=1,10 do task.wait(0.5); if isInBattle() then appeared=true; break end end
+                if appeared then
+                    local t=0
+                    while isInBattle() and states.trialsActive do
+                        if RUN_GEN~=_G.AniPixels_RunGen then break end
+                        task.wait(0.3); t=t+0.3; if t>300 then sessionAlive=false; break end
+                    end
+                    if trialsDelay>0 then TSLbl.Text="⏳ Spawning... ("..trialsDelay.."s)"; task.wait(trialsDelay) end
+                else TSLbl.Text="⚠ Battle didn't appear, retrying..."; task.wait(trialsRetryDelay) end
+            end
+            task.wait(1)
+        end)
+        if not loopOk then
+            statusLastError="TrialsLoop: "..tostring(loopErr):sub(1,80)
+            pcall(function() SLbl.Text="⚠ Trials error (recovering): "..tostring(loopErr):sub(1,50) end)
+            task.wait(2)
         end
-        task.wait(1)
     end
 end)
 
