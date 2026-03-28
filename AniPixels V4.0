@@ -94,6 +94,33 @@ local states = {
     serverHop=false, dragonBall=false, doorUnlock=false,
     fastForward=false, autoReExec=false, autoPVP=false,
 }
+-- Full bright: apply from toggle / load only (avoids a permanent Heartbeat listener).
+local _fbOrig={
+    Ambient=Lighting.Ambient,
+    OutdoorAmbient=Lighting.OutdoorAmbient,
+    Brightness=Lighting.Brightness,
+    FogEnd=Lighting.FogEnd,
+    FogStart=Lighting.FogStart,
+}
+local _fbActive=false
+local function applyFullBrightVisuals()
+    if _fbActive then return end
+    _fbActive=true
+    Lighting.Ambient=Color3.fromRGB(255,255,255)
+    Lighting.OutdoorAmbient=Color3.fromRGB(255,255,255)
+    Lighting.Brightness=10
+    Lighting.FogEnd=1e6
+    Lighting.FogStart=1e6
+end
+local function restoreFullBrightVisuals()
+    if not _fbActive then return end
+    _fbActive=false
+    Lighting.Ambient=_fbOrig.Ambient
+    Lighting.OutdoorAmbient=_fbOrig.OutdoorAmbient
+    Lighting.Brightness=_fbOrig.Brightness
+    Lighting.FogEnd=_fbOrig.FogEnd
+    Lighting.FogStart=_fbOrig.FogStart
+end
 local walkSpeed      = 16
 local hopDelay       = 10
 local flyBV, flyBG
@@ -327,6 +354,7 @@ do
 end
 if LS.farmTeamName then farmTeamName=LS.farmTeamName end
 if savedTeams["Farm"] then farmTeam=savedTeams["Farm"] end
+if states.fullBright then task.defer(applyFullBrightVisuals) end
 
 -- ============================================================
 --  BUILD WINDOW VIA NEXUSLIB
@@ -470,6 +498,7 @@ FTab:Toggle("⏱️ Anti AFK","Prevents auto-kick every 55s",states.antiAfk,func
 end)
 FTab:Toggle("💡 Full Bright","Max lighting · removes fog",states.fullBright,function(on)
     states.fullBright=on; saveSettings()
+    if on then applyFullBrightVisuals() else restoreFullBrightVisuals() end
 end)
 FTab:Toggle("👁️ Player ESP","Name tags above all players",states.esp,function(on)
     states.esp=on; saveSettings()
@@ -1040,7 +1069,7 @@ task.spawn(function()
         stPerf.Text=string.format("Uptime: %ds",math.floor(os.clock()-startedAt))
         stPerf.TextColor3=C.sub
         pushRecent(current)
-        task.wait(0.5)
+        task.wait(1.25)
     end
 end)
 end
@@ -1669,7 +1698,7 @@ task.spawn(function()
         if RUN_GEN~=_G.AniPixels_RunGen then break end
         if states.mergeActive and mergeMaxTier>=4 then
             local clicked=tryConfirmSparkingMerge()
-            task.wait(clicked and 0.25 or 0.08)
+            task.wait(clicked and 0.25 or 0.15)
         else
             task.wait(0.2)
         end
@@ -2568,7 +2597,8 @@ end
 rebuildNoclipParts(getChar())
 
 local _lastNoclipPrune=0
-RunService.Stepped:Connect(function()
+-- Heartbeat once/frame; Stepped can run multiple times per frame and caused heavy stutter with noclip.
+RunService.Heartbeat:Connect(function()
     if RUN_GEN~=_G.AniPixels_RunGen then return end
     if not states.noclip then return end
     local now=os.clock()
@@ -2614,38 +2644,13 @@ RunService.Heartbeat:Connect(function()
         if UserInputService:IsKeyDown(Enum.KeyCode.Q) then mv=mv-Vector3.new(0,1,0) end
         if mv.Magnitude>0 then mv=mv.Unit end
         flyBV.Velocity=mv*spd; flyBG.CFrame=cam.CFrame
-        local h=getHuman(); if h then h:ChangeState(Enum.HumanoidStateType.Physics) end
+        local h=getHuman()
+        if h and h:GetState()~=Enum.HumanoidStateType.Physics then
+            h:ChangeState(Enum.HumanoidStateType.Physics)
+        end
     else if flyBV then flyBV:Destroy(); flyBV=nil end; if flyBG then flyBG:Destroy(); flyBG=nil end end
 end)
 
--- full bright: apply once on enable, restore on disable
-local _fullBrightApplied=false
-local _origLighting={
-    Ambient=Lighting.Ambient,
-    OutdoorAmbient=Lighting.OutdoorAmbient,
-    Brightness=Lighting.Brightness,
-    FogEnd=Lighting.FogEnd,
-    FogStart=Lighting.FogStart,
-}
-RunService.Heartbeat:Connect(function()
-    if RUN_GEN~=_G.AniPixels_RunGen then return end
-    if states.fullBright then
-        if _fullBrightApplied then return end
-        _fullBrightApplied=true
-        Lighting.Ambient=Color3.fromRGB(255,255,255)
-        Lighting.OutdoorAmbient=Color3.fromRGB(255,255,255)
-        Lighting.Brightness=10
-        Lighting.FogEnd=1e6
-        Lighting.FogStart=1e6
-    elseif _fullBrightApplied then
-        _fullBrightApplied=false
-        Lighting.Ambient=_origLighting.Ambient
-        Lighting.OutdoorAmbient=_origLighting.OutdoorAmbient
-        Lighting.Brightness=_origLighting.Brightness
-        Lighting.FogEnd=_origLighting.FogEnd
-        Lighting.FogStart=_origLighting.FogStart
-    end
-end)
 task.spawn(function()
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
