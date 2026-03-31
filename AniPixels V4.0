@@ -956,8 +956,23 @@ function isRiftBossModel(model)
     if ok1 and v1==true then return true end
     local ok2,v2=pcall(function() return model:GetAttribute("BossUnit") end)
     if ok2 and v2==true then return true end
+    local ok3,rd=pcall(function() return model:GetAttribute("RiftDifficulty") end)
+    if ok3 and rd~=nil then
+        local r=tostring(rd):upper()
+        -- Higher-rank rifts often present as boss units without IsBoss/BossUnit attrs on the campaign model.
+        if r=="A" or r=="S" then return true end
+    end
     local gui=model:FindFirstChild("Gui")
     if gui and gui:FindFirstChild("BossLabel") then return true end
+    -- Fallback: some boss markers are nested Billboard/Text descendants.
+    for _,d in ipairs(model:GetDescendants()) do
+        if d:IsA("TextLabel") then
+            local t=tostring(d.ContentText or d.Text or ""):upper()
+            if t:find("BOSS",1,true) then return true end
+        elseif d.Name=="BossLabel" then
+            return true
+        end
+    end
     local n=tostring(model.Name or ""):lower()
     if n:find("boss",1,true) or n:find("final form",1,true) then return true end
     return false
