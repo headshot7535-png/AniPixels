@@ -86,11 +86,11 @@ local states = {
     infJump=false, noclip=false, godMode=false, fly=false,
     antiAfk=false, fullBright=false, esp=false,
     autoBoros=false, autoZamasu=false, autoSukuna=false,
-    autoAllForOne=false, autoDioHeaven=false, autoMadara=false,
+    autoAllForOne=false, autoDioHeaven=false, autoMadara=false, autoAizenHogyoku=false,
     autoAreaBosses=false,
     mergeActive=false,
-    farmNoTP=false, bossNoTP=false, farmActive=false, autoFarmIndex=false, indexTrackVariants=false, autoFarmSparking=false,
-    trialsActive=false, trialsNoTP=false, trialsNoLeave=false,
+    farmNoTP=false, bossNoTP=false, farmActive=false, autoFarmIndex=false, indexTrackVariants=false, autoFarmSparking=false, autoFarmRifts=false, riftNoTP=false, autoRiftBossTeam=false,
+    trialsActive=false, trialsNoTP=false, trialsNoLeave=false, autoTrialsBossTeam=false,
     serverHop=false, dragonBall=false, doorUnlock=false,
     fastForward=false, autoReExec=false, autoPVP=false,
 }
@@ -129,6 +129,7 @@ local autoFightDelay = 1.5
 local mergeThreshold = 4
 local mergeMaxTier   = 7
 local leaveWave      = 5
+trialDifficulty = trialDifficulty or "Normal"
 local mergeTargetBase = ""
 local mergeTargets   = {}
 local farmTargets    = {}
@@ -136,11 +137,14 @@ local farmIndex      = 1
 local petToCampaign  = {}
 local petNameList    = {}
 local selectedDoors  = {}
+selectedAreaBosses = selectedAreaBosses or {}
+selectedRiftRanks = selectedRiftRanks or {}
+selectedRiftPets = selectedRiftPets or {}
 local farmTeam       = {}
 local savedTeams     = {}
 local farmTeamName   = ""
 local isInBattle
-local modePriority = {"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","PVP"}
+local modePriority = {"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}
 local PRIORITY_LABELS = {
     AreaBosses="Area Bosses",
     RaidBosses="Raid Bosses",
@@ -148,8 +152,22 @@ local PRIORITY_LABELS = {
     AutoFarm="Auto Farm",
     AutoFarmIndex="Auto Farm Index",
     AutoFarmSparking="Auto Farm Sparking",
+    AutoFarmRifts="Auto Farm Rifts",
     PVP="PVP",
 }
+AREA_BOSS_DEFAULTS = AREA_BOSS_DEFAULTS or {"Pain","Kars","Final Form Muzan","Awakened Mahito"}
+RIFT_RANKS = RIFT_RANKS or {"F","D","C","B","A","S"}
+RAID_BOSS_NAME_SET = RAID_BOSS_NAME_SET or {
+    ["Boros"]=true,
+    ["Fusion Zamasu (Corrupted)"]=true,
+    ["Heian Era Sukuna"]=true,
+    ["All For One"]=true,
+    ["Dio Over Heaven"]=true,
+    ["Madara Ten Tails"]=true,
+    ["Aizen (Hogyoku)"]=true,
+}
+for _,name in ipairs(AREA_BOSS_DEFAULTS) do selectedAreaBosses[name]=true end
+for _,rank in ipairs(RIFT_RANKS) do selectedRiftRanks[rank]=true end
 
 local function getTierName(base, tier)
     if tier==0 then return base end
@@ -231,7 +249,13 @@ local function encodeSettings()
     data.farmTargets=table.concat(ftnames,",")
     local sdnames={}; for n,_ in pairs(selectedDoors) do sdnames[#sdnames+1]=n end
     data.selectedDoors=table.concat(sdnames,"|")
-    local presetKeys={"Raid","AreaBosses","Farm","Trials","PVP"}
+    local abnames={}; for n,on in pairs(selectedAreaBosses) do if on then abnames[#abnames+1]=n end end
+    data.selectedAreaBosses=table.concat(abnames,"|")
+    local rranks={}; for r,on in pairs(selectedRiftRanks) do if on then rranks[#rranks+1]=r end end
+    data.selectedRiftRanks=table.concat(rranks,"|")
+    local rpnames={}; for n,on in pairs(selectedRiftPets) do if on then rpnames[#rpnames+1]=n end end
+    data.selectedRiftPets=table.concat(rpnames,"|")
+    local presetKeys={"Raid","AreaBosses","Farm","Rifts","RiftBosses","Trials","TrialsBosses","PVP"}
     for _,pk in ipairs(presetKeys) do
         local slots=savedTeams[pk] or {["1"]="",["2"]="",["3"]="",["4"]=""}
         for si=1,4 do
@@ -239,6 +263,7 @@ local function encodeSettings()
         end
     end
     data.leaveWave=leaveWave
+    data.trialDifficulty=tostring(trialDifficulty or "Normal")
     data.farmTeamName=farmTeamName
     local tnames={}; for n,_ in pairs(mergeTargets) do tnames[#tnames+1]=n end
     data.mergeTargets=table.concat(tnames,",")
@@ -263,6 +288,7 @@ local function encodeSettings()
         end
     end
     t[#t+1]='"leaveWave":'..leaveWave
+    t[#t+1]='"trialDifficulty":"'..tostring(trialDifficulty or "Normal"):gsub('"',"'")..'"'
     t[#t+1]='"farmTeamName":"'..tostring(farmTeamName)..'"'
     t[#t+1]='"mergeTargets":"'..data.mergeTargets..'"'
     return "{"..table.concat(t,",").."}"
@@ -319,7 +345,7 @@ if LS.hopDelay       then hopDelay=LS.hopDelay end
 if LS.mergeThreshold then mergeThreshold=LS.mergeThreshold end
 if LS.mergeMaxTier~=nil then mergeMaxTier=math.clamp(math.floor(LS.mergeMaxTier),0,7) end
 if LS.modePriority then
-    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,AutoFarmIndex=true,AutoFarmSparking=true,PVP=true}
+    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,AutoFarmIndex=true,AutoFarmSparking=true,AutoFarmRifts=true,PVP=true}
     local parsed,seen={},{}
     for m in (LS.modePriority..","):gmatch("([^,]+),") do
         if allowed[m] and not seen[m] then
@@ -327,13 +353,19 @@ if LS.modePriority then
             parsed[#parsed+1]=m
         end
     end
-    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","PVP"}) do
+    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}) do
         if not seen[m] then parsed[#parsed+1]=m end
     end
     modePriority=parsed
 end
 if LS.mergeTargetBase then mergeTargetBase=LS.mergeTargetBase end
 if LS.leaveWave       then leaveWave=LS.leaveWave end
+if type(LS.trialDifficulty)=="string" then
+    local td=tostring(LS.trialDifficulty)
+    if td=="Normal" or td=="Intermediate" or td=="Difficult" then
+        trialDifficulty=td
+    end
+end
 if LS.mergeTargets then
     for n in (LS.mergeTargets..","):gmatch("([^,]+),") do
         local base=toMergeBaseName(n)
@@ -342,8 +374,23 @@ if LS.mergeTargets then
 end
 if LS.farmTargets  then for n in (LS.farmTargets..","):gmatch("([^,]+),")  do farmTargets[n]=true  end end
 if LS.selectedDoors then for n in (LS.selectedDoors.."|"):gmatch("([^|]+)|") do selectedDoors[n]=true end end
+if LS.selectedAreaBosses then
+    selectedAreaBosses={}
+    for n in (LS.selectedAreaBosses.."|"):gmatch("([^|]+)|") do selectedAreaBosses[n]=true end
+end
+if LS.selectedRiftRanks then
+    selectedRiftRanks={}
+    for r in (LS.selectedRiftRanks.."|"):gmatch("([^|]+)|") do
+        local rank=tostring(r or ""):upper()
+        if rank~="" then selectedRiftRanks[rank]=true end
+    end
+end
+if LS.selectedRiftPets then
+    selectedRiftPets={}
+    for n in (LS.selectedRiftPets.."|"):gmatch("([^|]+)|") do selectedRiftPets[n]=true end
+end
 do
-    local presetKeys={"Raid","AreaBosses","Farm","Trials","PVP"}
+    local presetKeys={"Raid","AreaBosses","Farm","Rifts","RiftBosses","Trials","TrialsBosses","PVP"}
     for _,pk in ipairs(presetKeys) do
         local s1=LS[pk.."_1"] or ""; local s2=LS[pk.."_2"] or ""
         local s3=LS[pk.."_3"] or ""; local s4=LS[pk.."_4"] or ""
@@ -365,6 +412,8 @@ local SLbl = Win._status   -- shim: SLbl.Text = x still works everywhere
 -- ── Tab pages ─────────────────────────────────────────────────
 local FTab    = Win:Tab("⚙️",  "Features")
 local BTab    = Win:Tab("⚔️",  "Bosses")
+ABTab   = Win:Tab("👑",  "Area Bosses")
+RTab    = Win:Tab("🌀",  "Rifts")
 local TTab    = Win:Tab("⚗️",  "Trials")
 local MTab    = Win:Tab("🔀",  "Merge")
 local FarmTab = Win:Tab("🌾",  "Farm")
@@ -392,7 +441,7 @@ local function modePriorityText()
     return table.concat(t," > ")
 end
 local function setModePriority(newOrder)
-    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,AutoFarmIndex=true,AutoFarmSparking=true,PVP=true}
+    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,AutoFarmIndex=true,AutoFarmSparking=true,AutoFarmRifts=true,PVP=true}
     local seen,parsed={},{}
     for _,m in ipairs(newOrder or {}) do
         if allowed[m] and not seen[m] then
@@ -400,7 +449,7 @@ local function setModePriority(newOrder)
             parsed[#parsed+1]=m
         end
     end
-    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","PVP"}) do
+    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}) do
         if not seen[m] then parsed[#parsed+1]=m end
     end
     modePriority=parsed
@@ -442,7 +491,7 @@ local function refreshPrioLabel()
     prioLabel.Set("Current: "..modePriorityText())
 end
 PrioTab:Section("Select Priority Slots")
-local prioModeOrder={"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","PVP"}
+local prioModeOrder={"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}
 local prioInputs={}
 local function currentPriorityIndex(mode)
     for i,m in ipairs(modePriority) do
@@ -625,7 +674,10 @@ local presetDefs={
     {key="Raid",  icon="⚔️", color=Color3.fromRGB(140,40,200), colorD=Color3.fromRGB(60,10,100)},
     {key="AreaBosses", icon="👑", color=Color3.fromRGB(210,130,20), colorD=Color3.fromRGB(90,50,10)},
     {key="Farm",  icon="🌾", color=Color3.fromRGB(180,120,0),  colorD=Color3.fromRGB(80,50,0)},
+    {key="Rifts", icon="🌀", color=Color3.fromRGB(140,80,255), colorD=Color3.fromRGB(65,30,120)},
+    {key="RiftBosses", icon="👺", color=Color3.fromRGB(255,105,75), colorD=Color3.fromRGB(120,45,30)},
     {key="Trials",icon="🏆", color=Color3.fromRGB(0,140,200),  colorD=Color3.fromRGB(0,60,100)},
+    {key="TrialsBosses",icon="👹", color=Color3.fromRGB(230,90,60),  colorD=Color3.fromRGB(110,35,20)},
     {key="PVP",   icon="🥊", color=Color3.fromRGB(220,50,50),  colorD=Color3.fromRGB(100,15,15)},
 }
 local presetTeams={}
@@ -764,16 +816,18 @@ end
 local function anyRaidBossEnabled()
     return states.autoBoros or states.autoZamasu or states.autoSukuna
         or states.autoAllForOne or states.autoDioHeaven or states.autoMadara
+        or states.autoAizenHogyoku
 end
 
 local function hasAliveAreaBoss()
     local c=getCampaign(); if not c then return false end
-    local defaults={"Pain","Kars","Final Form Muzan","Awakened Mahito"}
-    for _,name in ipairs(defaults) do
-        local model=c:FindFirstChild(name)
-        if model then
-            local h=model:FindFirstChildOfClass("Humanoid")
-            if (not h) or h.Health>0 then return true end
+    for _,name in ipairs(AREA_BOSS_DEFAULTS) do
+        if selectedAreaBosses[name] then
+            local model=c:FindFirstChild(name)
+            if model then
+                local h=model:FindFirstChildOfClass("Humanoid")
+                if (not h) or h.Health>0 then return true end
+            end
         end
     end
     local ok,res=pcall(function()
@@ -781,15 +835,132 @@ local function hasAliveAreaBoss()
         ab=ab and ab:FindFirstChild("AreaBosses")
         if not ab then return false end
         for _,n in ipairs(ab:GetChildren()) do
-            local model=c:FindFirstChild(n.Name)
-            if model then
-                local h=model:FindFirstChildOfClass("Humanoid")
-                if (not h) or h.Health>0 then return true end
+            if selectedAreaBosses[n.Name] then
+                local model=c:FindFirstChild(n.Name)
+                if model then
+                    local h=model:FindFirstChildOfClass("Humanoid")
+                    if (not h) or h.Health>0 then return true end
+                end
             end
         end
         return false
     end)
     return ok and res or false
+end
+
+function getAreaBossFilterNames()
+    local names,seen={},{}
+    for _,n in ipairs(AREA_BOSS_DEFAULTS) do
+        names[#names+1]=n
+        seen[n]=true
+    end
+    pcall(function()
+        local rs=game:GetService("ReplicatedStorage")
+        local assets=rs:FindFirstChild("Assets")
+        local ab=assets and assets:FindFirstChild("AreaBosses")
+        if not ab then return end
+        for _,c in ipairs(ab:GetChildren()) do
+            if (not RAID_BOSS_NAME_SET[c.Name]) and (not seen[c.Name]) then
+                seen[c.Name]=true
+                names[#names+1]=c.Name
+            end
+        end
+    end)
+    table.sort(names)
+    return names
+end
+
+function normalizeRiftRank(v)
+    local s=tostring(v or ""):upper()
+    local rank=s:match("([FDCBAS])")
+    return rank
+end
+function getGateRank(gate)
+    if not gate then return nil end
+    local attrs={"Rank","RiftRank","gateRank","GateRank"}
+    for _,a in ipairs(attrs) do
+        local ok,val=pcall(function() return gate:GetAttribute(a) end)
+        if ok and val~=nil then
+            local rank=normalizeRiftRank(val)
+            if rank then return rank end
+        end
+    end
+    local marker=gate:FindFirstChild("RiftMarker")
+    if marker then
+        local lbl=marker:FindFirstChild("RiftRank")
+        local txt=(lbl and (lbl.Text or lbl.ContentText)) or ""
+        local rank=normalizeRiftRank(txt)
+        if rank then return rank end
+    end
+    local rank=normalizeRiftRank(gate.Name)
+    if rank then return rank end
+    return "F"
+end
+function isRiftGateActive(gate)
+    if not gate then return false end
+    local ok,val=pcall(function() return gate:GetAttribute("Active") end)
+    if ok and val~=nil then return val==true end
+    return gate:FindFirstChild("RiftMarker")~=nil
+end
+function findJoinableRiftGate()
+    local folder=workspace:FindFirstChild("RiftSpawns")
+    if not folder then return nil,nil end
+    for _,gate in ipairs(folder:GetChildren()) do
+        if isRiftGateActive(gate) then
+            local rank=getGateRank(gate)
+            if selectedRiftRanks[rank] then
+                return gate,rank
+            end
+        end
+    end
+    return nil,nil
+end
+function getRiftPetsGroupedByMap()
+    local groups={}
+    pcall(function()
+        local rs=game:GetService("ReplicatedStorage")
+        local assets=rs:FindFirstChild("Assets")
+        local maps=assets and assets:FindFirstChild("RiftMaps")
+        if not maps then return end
+        for _,map in ipairs(maps:GetChildren()) do
+            local units=map:FindFirstChild("RiftUnits")
+            if units then
+                local names={}
+                for _,u in ipairs(units:GetChildren()) do
+                    names[#names+1]=u.Name
+                end
+                table.sort(names)
+                groups[#groups+1]={map=map.Name,pets=names}
+            end
+        end
+    end)
+    table.sort(groups,function(a,b) return tostring(a.map)<tostring(b.map) end)
+    return groups
+end
+function getActiveSelectedRiftModel()
+    local campaign=getCampaign(); if not campaign then return nil,nil,nil end
+    for _,model in ipairs(campaign:GetChildren()) do
+        if model:GetAttribute("RiftUnit")~=nil and selectedRiftPets[model.Name] then
+            local hum=model:FindFirstChildOfClass("Humanoid")
+            local alive=(not hum) or hum.Health>0
+            if alive then
+                return model,model.Name,tostring(model:GetAttribute("RiftDifficulty") or "")
+            end
+        end
+    end
+    return nil,nil,nil
+end
+function isRiftBossModel(model)
+    if not (model and model.Parent) then return false end
+    local ok1,v1=pcall(function() return model:GetAttribute("IsBoss") end)
+    if ok1 and v1==true then return true end
+    local ok2,v2=pcall(function() return model:GetAttribute("BossUnit") end)
+    if ok2 and v2==true then return true end
+    local gui=model:FindFirstChild("Gui")
+    if gui and gui:FindFirstChild("BossLabel") then return true end
+    local n=tostring(model.Name or ""):lower()
+    if n:find("boss",1,true) or n:find("final form",1,true) then return true end
+    return false
 end
 
 local RAID_BOSS_BY_TOGGLE={
@@ -799,6 +970,7 @@ local RAID_BOSS_BY_TOGGLE={
     autoAllForOne="All For One",
     autoDioHeaven="Dio Over Heaven",
     autoMadara="Madara Ten Tails",
+    autoAizenHogyoku="Aizen (Hogyoku)",
 }
 local AREA_INDEX_NAMES={
     ["Pain"]=true,
@@ -955,6 +1127,7 @@ local function isModeBlocking(mode)
     if mode=="AutoFarm" then return states.farmActive and next(farmTargets)~=nil end
     if mode=="AutoFarmIndex" then return states.autoFarmIndex and countMissingIndexTargets()>0 end
     if mode=="AutoFarmSparking" then return states.autoFarmSparking and hasSafariSparkingTarget() end
+    if mode=="AutoFarmRifts" then return states.autoFarmRifts and getActiveSelectedRiftModel()~=nil end
     if mode=="PVP" then return states.autoPVP and not isInBattle() end
     return false
 end
@@ -1078,10 +1251,22 @@ BTab:Toggle("🚫 Disable Boss TP","Don't teleport to boss before firing",states
     states.bossNoTP=on; saveSettings()
 end)
 
-BTab:Section("Area Bosses")
-BTab:Toggle("👑 Auto Area Bosses","Auto battle AreaBosses when they spawn",states.autoAreaBosses,function(on)
+ABTab:Section("Area Bosses")
+ABTab:Toggle("👑 Auto Area Bosses","Auto battle AreaBosses when they spawn",states.autoAreaBosses,function(on)
     states.autoAreaBosses=on; saveSettings()
 end)
+ABTab:Section("Area Boss Filter")
+for _,bossName in ipairs(getAreaBossFilterNames()) do
+    local defaultOn=selectedAreaBosses[bossName]
+    if defaultOn==nil then
+        defaultOn=true
+        selectedAreaBosses[bossName]=true
+    end
+    ABTab:Toggle("☑ "..bossName,"Fight this area boss when active",defaultOn,function(on)
+        selectedAreaBosses[bossName]=on
+        saveSettings()
+    end)
+end
 
 BTab:Section("Boss Cards")
 
@@ -1181,12 +1366,71 @@ local bossConfig={
     {"🖤","All For One","All For One","autoAllForOne",13,"All For One"},
     {"🌙","Dio Over Heaven","Dio Over Heaven","autoDioHeaven",14,"Dio Over Heaven"},
     {"🔴","Madara Ten Tails","Madara Ten Tails","autoMadara",15,"Madara Ten Tails"},
+    {"🧪","Aizen (Hogyoku)","Aizen (Hogyoku)","autoAizenHogyoku",16,"Aizen (Hogyoku)"},
 }
 for _,cfg in ipairs(bossConfig) do MakeBossCard(cfg[1],cfg[2],cfg[3],cfg[4],cfg[5],cfg[6]) end
 
 BTab:Section("Fight Interval")
 BTab:Slider("Fight Interval","seconds between auto fight attempts",{min=0.3,max=10,default=autoFightDelay,format=function(v) return string.format("%.1fs",v) end},function(v)
     autoFightDelay=v; saveSettings()
+end)
+
+RTab:Section("Rifts")
+RTab:Toggle("⚔ Auto Farm Rift Pets","Auto battle selected rift pets in Campaign",states.autoFarmRifts,function(on)
+    states.autoFarmRifts=on; saveSettings()
+end)
+RTab:Toggle("👺 Auto Rift Boss Team","Detect rift bosses and switch to RiftBosses preset",states.autoRiftBossTeam,function(on)
+    states.autoRiftBossTeam=on; saveSettings()
+end)
+RTab:Toggle("🚫 No TP (Rifts)","Farm selected rift pets without teleporting",states.riftNoTP,function(on)
+    states.riftNoTP=on; saveSettings()
+end)
+RTab:Section("Rift Pet Targets")
+for _,group in ipairs(getRiftPetsGroupedByMap()) do
+    RTab:Section("📍 "..group.map)
+    for _,petName in ipairs(group.pets) do
+        local on=selectedRiftPets[petName]
+        if on==nil then
+            on=false
+            selectedRiftPets[petName]=false
+        end
+        RTab:Toggle("☑ "..petName,"Farm this rift pet when active",on,function(v)
+            selectedRiftPets[petName]=v
+            saveSettings()
+        end)
+    end
+end
+RTab:Section("Rift Map Tools")
+RTab:Button("📜","Print Rift Map Pets","Reads ReplicatedStorage.Assets.RiftMaps.<Rift>.RiftUnits names",C.accent,function()
+    local ok,err=pcall(function()
+        local rs=game:GetService("ReplicatedStorage")
+        local assets=rs:FindFirstChild("Assets")
+        local maps=assets and assets:FindFirstChild("RiftMaps")
+        if not maps then
+            SLbl.Text="⚠ RiftMaps folder not found"
+            return
+        end
+        local out={}
+        for _,map in ipairs(maps:GetChildren()) do
+            local units=map:FindFirstChild("RiftUnits")
+            if units then
+                local names={}
+                for _,u in ipairs(units:GetChildren()) do
+                    names[#names+1]=u.Name
+                end
+                table.sort(names)
+                out[#out+1]=map.Name..": "..(#names>0 and table.concat(names,", ") or "(no units)")
+            end
+        end
+        table.sort(out)
+        print("===== Rift Map Pets =====")
+        for _,line in ipairs(out) do print(line) end
+        print("===== End Rift Map Pets =====")
+        SLbl.Text="Printed "..tostring(#out).." rift map unit lists"
+    end)
+    if not ok then
+        SLbl.Text="⚠ Rift map scan failed: "..tostring(err):sub(1,60)
+    end
 end)
 
 -- ============================================================
@@ -1237,6 +1481,20 @@ TPillBtn.MouseButton1Click:Connect(function() setTrials(not states.trialsActive)
 end
 
 TTab:Section("Options")
+TTab:Section("Difficulty")
+local trialDiffLabel=TTab:Label("Selected: "..tostring(trialDifficulty or "Normal"))
+local function setTrialDifficulty(v)
+    if v~="Normal" and v~="Intermediate" and v~="Difficult" then return end
+    trialDifficulty=v
+    trialDiffLabel.Set("Selected: "..v)
+    saveSettings()
+end
+TTab:Button("🟢","Normal","Use Normal trial difficulty",C.green,function() setTrialDifficulty("Normal") end)
+TTab:Button("🟡","Intermediate","Use Intermediate trial difficulty",C.gold,function() setTrialDifficulty("Intermediate") end)
+TTab:Button("🔴","Difficult","Use Difficult trial difficulty",C.red,function() setTrialDifficulty("Difficult") end)
+TTab:Toggle("👹 Auto Trials Boss Team","Detect boss phase and switch to TrialsBosses preset",states.autoTrialsBossTeam,function(on)
+    states.autoTrialsBossTeam=on; saveSettings()
+end)
 TTab:Toggle("🚫 No TP","Don't teleport to trial model",states.trialsNoTP,function(on)
     states.trialsNoTP=on; saveSettings()
 end)
@@ -1654,6 +1912,7 @@ local function getActiveMergeTier()
 end
 
 task.spawn(function()
+    local activeRiftTeamKey="Rifts"
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
         local loopOk,loopErr=pcall(function()
@@ -2736,8 +2995,7 @@ end)
 -- ── Boss loops ─────────────────────────────────────────────────
 local function getAreaBossNames()
     local names,seen={},{}
-    local defaults={"Pain","Kars","Final Form Muzan","Awakened Mahito"}
-    for _,n in ipairs(defaults) do
+    for _,n in ipairs(AREA_BOSS_DEFAULTS) do
         names[#names+1]=n
         seen[n]=true
     end
@@ -2747,7 +3005,7 @@ local function getAreaBossNames()
         local ab=assets and assets:FindFirstChild("AreaBosses")
         if not ab then return end
         for _,c in ipairs(ab:GetChildren()) do
-            if not seen[c.Name] then
+            if (not RAID_BOSS_NAME_SET[c.Name]) and (not seen[c.Name]) then
                 seen[c.Name]=true
                 names[#names+1]=c.Name
             end
@@ -2758,11 +3016,13 @@ end
 local function getActiveAreaBossModel()
     local campaign=getCampaign(); if not campaign then return nil,nil end
     for _,name in ipairs(getAreaBossNames()) do
-        local model=campaign:FindFirstChild(name)
-        if model then
-            local hum=model:FindFirstChildOfClass("Humanoid")
-            local alive=(not hum) or hum.Health>0
-            if alive then return model,name end
+        if selectedAreaBosses[name] then
+            local model=campaign:FindFirstChild(name)
+            if model then
+                local hum=model:FindFirstChildOfClass("Humanoid")
+                local alive=(not hum) or hum.Health>0
+                if alive then return model,name end
+            end
         end
     end
     return nil,nil
@@ -2858,6 +3118,52 @@ end
 bossLoop("autoBoros","Boros"); bossLoop("autoZamasu","Fusion Zamasu (Corrupted)")
 bossLoop("autoSukuna","Heian Era Sukuna"); bossLoop("autoAllForOne","All For One")
 bossLoop("autoDioHeaven","Dio Over Heaven"); bossLoop("autoMadara","Madara Ten Tails")
+bossLoop("autoAizenHogyoku","Aizen (Hogyoku)")
+
+task.spawn(function()
+    while true do
+        if RUN_GEN~=_G.AniPixels_RunGen then break end
+        local loopOk,loopErr=pcall(function()
+            if not states.autoFarmRifts then task.wait(0.35); return end
+            if not canRunMode("AutoFarmRifts") then task.wait(0.6); return end
+            if isInBattle() then task.wait(0.9); return end
+            local model,petName,rank=getActiveSelectedRiftModel()
+            if not model then
+                SLbl.Text="🌀 No selected active rift pets"
+                task.wait(1)
+                return
+            end
+            local desiredTeam="Rifts"
+            if states.autoRiftBossTeam and isRiftBossModel(model) then
+                desiredTeam="RiftBosses"
+            end
+            if desiredTeam~=activeRiftTeamKey then
+                applyPresetTeam(desiredTeam); task.wait(0.2)
+                activeRiftTeamKey=desiredTeam
+            else
+                applyPresetTeam(desiredTeam); task.wait(0.2)
+            end
+            if not states.riftNoTP then
+                pcall(function()
+                    local root=getRoot(); if not root then return end
+                    local pos=model:GetModelCFrame().Position
+                    if (root.Position-pos).Magnitude>30 then
+                        root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                        task.wait(0.45)
+                    end
+                end)
+            end
+            pcall(function() RequestBattle:FireServer(model) end)
+            SLbl.Text="🌀 Rift Farm ("..activeRiftTeamKey.."): "..petName..(rank~="" and (" ["..rank.."]") or "")
+            task.wait(autoFightDelay)
+        end)
+        if not loopOk then
+            statusLastError="RiftFarmLoop: "..tostring(loopErr):sub(1,80)
+            pcall(function() SLbl.Text="⚠ Rift farm error (recovering): "..tostring(loopErr):sub(1,50) end)
+            task.wait(2)
+        end
+    end
+end)
 
 -- ── Trials loop ────────────────────────────────────────────────
 local TrialsMode=game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("TrialsMode")
@@ -2874,13 +3180,16 @@ task.spawn(function()
                 return
             end
             TSLbl.Text="▶ Starting trial session..."
-            local startOk,startErr=pcall(function() TrialsMode:FireServer({Start=true}) end)
+            local startOk,startErr=pcall(function()
+                TrialsMode:FireServer({Start=true,Difficulty=tostring(trialDifficulty or "Normal")})
+            end)
             if not startOk then TSLbl.Text="❌ TrialsMode: "..tostring(startErr); task.wait(2); return end
             local battleModel=nil
             for _=1,6 do battleModel=findTrialsModel(); if battleModel then break end; task.wait(0.5) end
             if not battleModel then TSLbl.Text="⚠ No cooler model found after 3s"; task.wait(2); return end
             local coolerIndex=1; pcall(function() coolerIndex=battleModel:GetAttribute("CoolerIndex") or 1 end)
             applyPresetTeam("Trials"); task.wait(0.2)
+            local activeTrialTeamKey="Trials"
             if not states.trialsNoTP then
                 pcall(function()
                     local root=getRoot(); if not root then return end
@@ -2889,17 +3198,44 @@ task.spawn(function()
                     root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
                 end); task.wait(0.3)
             end
-            local waveLabel=nil
-            do
+            local function getTrialsLabels()
                 local sg=playerGui:FindFirstChild("ScreenGui")
                 local tf=sg and sg:FindFirstChild("Trials")
-                waveLabel=tf and tf:FindFirstChild("WaveLabel")
+                if not tf then return nil,nil end
+                return tf:FindFirstChild("WaveLabel"), tf:FindFirstChild("ObjectiveLabel")
             end
             local function getWave()
-                local wl=waveLabel
+                local wl=getTrialsLabels()
                 if not (wl and wl.Parent) then return 0 end
-                local n=tonumber((wl.ContentText or ""):match("%d+"))
+                local txt=tostring(wl.ContentText or wl.Text or "")
+                local n=tonumber(txt:match("%d+"))
                 return n or 0
+            end
+            local function isObjectiveComplete()
+                local _,ol=getTrialsLabels()
+                if not (ol and ol.Parent) then return true end
+                local txt=tostring(ol.ContentText or ol.Text or "")
+                local a,b=txt:match("%((%d+)%s*/%s*(%d+)%)")
+                local done=tonumber(a)
+                local need=tonumber(b)
+                if not done or not need or need<=0 then return false end
+                return done>=need
+            end
+            local function isTrialsBossNow(waveNow)
+                local bm=findTrialsModel()
+                if bm and bm.Parent then
+                    if tostring(bm.Name)=="Cooler Final Form" then return true end
+                    local ok,isBoss=pcall(function() return bm:GetAttribute("IsBoss") end)
+                    if ok and isBoss==true then return true end
+                end
+                local _,ol=getTrialsLabels()
+                if ol and ol.Parent then
+                    local ot=tostring(ol.ContentText or ol.Text or ""):lower()
+                    if ot:find("final form",1,true) or ot:find("boss",1,true) then
+                        return true
+                    end
+                end
+                return (tonumber(waveNow) or 0)>=100
             end
             local currentWave=getWave(); local sessionAlive=true
             local lastTp=0
@@ -2920,8 +3256,20 @@ task.spawn(function()
                     end
                 end
                 currentWave=getWave()
+                if states.autoTrialsBossTeam then
+                    local desiredTeam=isTrialsBossNow(currentWave) and "TrialsBosses" or "Trials"
+                    if desiredTeam~=activeTrialTeamKey then
+                        applyPresetTeam(desiredTeam); task.wait(0.2)
+                        activeTrialTeamKey=desiredTeam
+                    end
+                end
                 TSLbl.Text="⚔ Wave "..currentWave.."/"..(states.trialsNoLeave and "∞" or tostring(leaveWave))
                 if not states.trialsNoLeave and currentWave>=leaveWave then
+                    if leaveWave>=100 and not isObjectiveComplete() then
+                        TSLbl.Text="🎯 Wave "..currentWave.." reached, waiting objective completion..."
+                        task.wait(0.5)
+                        continue
+                    end
                     TSLbl.Text="🚪 Leaving at Wave "..currentWave.."..."
                     pcall(function() TrialsMode:FireServer({Exit=true}) end); task.wait(1.5); sessionAlive=false; break
                 end
