@@ -760,7 +760,23 @@ end
 local function findTrialsModel()
     local result=nil
     pcall(function()
-        local lc=workspace.LocalCoolers; if lc then result=lc:GetChildren()[1]; return end
+        local lc=workspace.LocalCoolers
+        if lc then
+            local kids=lc:GetChildren()
+            -- Newer/current trial target is usually appended later; prefer last alive model.
+            for i=#kids,1,-1 do
+                local m=kids[i]
+                if m then
+                    local h=m:FindFirstChildOfClass("Humanoid")
+                    if (not h) or h.Health>0 then
+                        result=m
+                        return
+                    end
+                end
+            end
+            result=kids[#kids]
+            return
+        end
     end)
     if result then return result end
     pcall(function()
@@ -3185,6 +3201,7 @@ local TrialsMode=game:GetService("ReplicatedStorage"):WaitForChild("Events"):Wai
 local BattleResult=game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("BattleResult")
 
 task.spawn(function()
+    local trialsPreStarted = false
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
         local loopOk,loopErr=pcall(function()
@@ -3194,11 +3211,16 @@ task.spawn(function()
                 task.wait(0.6)
                 return
             end
-            TSLbl.Text="▶ Starting trial session..."
-            local startOk,startErr=pcall(function()
-                TrialsMode:FireServer({Start=true,Difficulty=tostring(trialDifficulty or "Normal")})
-            end)
-            if not startOk then TSLbl.Text="❌ TrialsMode: "..tostring(startErr); task.wait(2); return end
+            if not trialsPreStarted then
+                TSLbl.Text="▶ Starting trial session..."
+                local startOk,startErr=pcall(function()
+                    TrialsMode:FireServer({Start=true,Difficulty=tostring(trialDifficulty or "Normal")})
+                end)
+                if not startOk then TSLbl.Text="❌ TrialsMode: "..tostring(startErr); task.wait(2); return end
+            else
+                trialsPreStarted=false
+                TSLbl.Text="▶ Continuing restarted trial session..."
+            end
             local battleModel=nil
             for _=1,6 do battleModel=findTrialsModel(); if battleModel then break end; task.wait(0.5) end
             if not battleModel then TSLbl.Text="⚠ No cooler model found after 3s"; task.wait(2); return end
@@ -3226,6 +3248,10 @@ task.spawn(function()
                 local n=tonumber(txt:match("%d+"))
                 return n or 0
             end
+            local function hasWaveGui()
+                local wl=getTrialsLabels()
+                return wl and wl.Parent and true or false
+            end
             local function isObjectiveComplete()
                 local _,ol=getTrialsLabels()
                 if not (ol and ol.Parent) then return true end
@@ -3246,11 +3272,28 @@ task.spawn(function()
                     if tostring(bm.Name)=="Cooler Final Form" then return true end
                     local ok,isBoss=pcall(function() return bm:GetAttribute("IsBoss") end)
                     if ok and isBoss==true then return true end
+                    -- Only trust BossLabel on the currently selected Trials model (last/current LocalCoolers entry).
+                    local bossLabelFound=false
+                    pcall(function()
+                        local gui=bm:FindFirstChild("Gui")
+                        if gui and gui:FindFirstChild("BossLabel") then
+                            bossLabelFound=true
+                            return
+                        end
+                        for _,d in ipairs(bm:GetDescendants()) do
+                            if d.Name=="BossLabel" then
+                                bossLabelFound=true
+                                break
+                            end
+                        end
+                    end)
+                    if bossLabelFound then return true end
                 end
                 local _,ol=getTrialsLabels()
                 if ol and ol.Parent then
                     local ot=tostring(ol.ContentText or ol.Text or ""):lower()
-                    if ot:find("final form",1,true) or ot:find("boss",1,true) then
+                    -- Keep this strict to avoid false positives from normal "Defeat Metal Cooler" objectives.
+                    if ot:find("final form",1,true) then
                         return true
                     end
                 end
@@ -3258,6 +3301,7 @@ task.spawn(function()
             end
             local currentWave=getWave(); local sessionAlive=true
             local lastTp=0
+            local missingWaveGuiTicks=0
             while states.trialsActive and sessionAlive do
                 if RUN_GEN~=_G.AniPixels_RunGen then break end
                 if not states.trialsNoTP then
@@ -3274,6 +3318,25 @@ task.spawn(function()
                         end)
                     end
                 end
+                if not hasWaveGui() then
+                    missingWaveGuiTicks=missingWaveGuiTicks+1
+                    TSLbl.Text="⚠ Wave GUI missing ("..missingWaveGuiTicks.."/6) — waiting..."
+                    if missingWaveGuiTicks>=6 then
+                        TSLbl.Text="🔁 Wave GUI not found — restarting Trials..."
+                        pcall(function() TrialsMode:FireServer({Exit=true}) end)
+                        task.wait(0.8)
+                        pcall(function()
+                            TrialsMode:FireServer({Start=true,Difficulty=tostring(trialDifficulty or "Normal")})
+                        end)
+                        trialsPreStarted=true
+                        sessionAlive=false
+                        break
+                    end
+                    task.wait(0.5)
+                    continue
+                else
+                    missingWaveGuiTicks=0
+                end
                 currentWave=getWave()
                 if states.autoTrialsBossTeam then
                     local desiredTeam=isTrialsBossNow(currentWave) and "TrialsBosses" or "Trials"
@@ -3288,8 +3351,17 @@ task.spawn(function()
                         TSLbl.Text="🎯 Wave "..currentWave.." reached, farming until objective complete..."
                     else
                         if leaveWave>=100 then
-                            TSLbl.Text="✅ Objective complete — leaving in 3s..."
-                            task.wait(3)
+                            TSLbl.Text="✅ Objective complete — restarting in 5s..."
+                            task.wait(5)
+                            TSLbl.Text="🔁 Re-firing Trials start..."
+                            pcall(function() TrialsMode:FireServer({Exit=true}) end)
+                            task.wait(0.8)
+                            pcall(function()
+                                TrialsMode:FireServer({Start=true,Difficulty=tostring(trialDifficulty or "Normal")})
+                            end)
+                            trialsPreStarted=true
+                            sessionAlive=false
+                            break
                         end
                         TSLbl.Text="🚪 Leaving at Wave "..currentWave.."..."
                         pcall(function() TrialsMode:FireServer({Exit=true}) end); task.wait(1.5); sessionAlive=false; break
@@ -3302,6 +3374,13 @@ task.spawn(function()
                     local t=0
                     while isInBattle() and states.trialsActive do
                         if RUN_GEN~=_G.AniPixels_RunGen then break end
+                        if states.autoTrialsBossTeam then
+                            local desiredTeam=isTrialsBossNow(currentWave) and "TrialsBosses" or "Trials"
+                            if desiredTeam~=activeTrialTeamKey then
+                                applyPresetTeam(desiredTeam)
+                                activeTrialTeamKey=desiredTeam
+                            end
+                        end
                         task.wait(0.3); t=t+0.3; if t>300 then sessionAlive=false; break end
                     end
                     if trialsDelay>0 then TSLbl.Text="⏳ Spawning... ("..trialsDelay.."s)"; task.wait(trialsDelay) end
