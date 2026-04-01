@@ -21,16 +21,9 @@ end
 local NEXUSLIB_URL = "https://raw.githubusercontent.com/headshot7535-png/Nexuslib/main/Nexuslib"
 local Lib
 if readfile and pcall then
-    local localCandidates = {"NexusLib1.4.lua","NexusLib.lua"}
-    for _,fileName in ipairs(localCandidates) do
-        local ok, content = pcall(readfile, fileName)
-        if ok and type(content) == "string" and #content > 500 then
-            local okLoad, loaded = pcall(function() return loadstring(content)() end)
-            if okLoad and loaded then
-                Lib = loaded
-                break
-            end
-        end
+    local ok, content = pcall(readfile, "NexusLib.lua")
+    if ok and type(content) == "string" and #content > 500 then
+        Lib = loadstring(content)()
     end
 end
 if not Lib then
@@ -60,17 +53,6 @@ for _ = 1, 100 do
     task.wait(0.2)
 end
 if not LP then return end
-
--- Prevent duplicate re-exec loops from rebuilding the GUI in the same server job.
-do
-    local now=tick()
-    local g=_G.AniPixels_SessionGuard
-    if type(g)=="table" and g.jobId==game.JobId and (now-(g.startedAt or 0))<20 then
-        warn("[AniPixels] Duplicate launch blocked in same server job.")
-        return
-    end
-    _G.AniPixels_SessionGuard={jobId=game.JobId,startedAt=now}
-end
 
 _G.AniPixels_RunGen = (_G.AniPixels_RunGen or 0) + 1
 local RUN_GEN = _G.AniPixels_RunGen
@@ -3513,26 +3495,21 @@ pcall(function()
     game:GetService("Players").LocalPlayer.OnTeleport:Connect(function(teleportState)
         if teleportState==Enum.TeleportState.RequestedByServer then
             syncRejoinFlag()
-            if queue_on_teleport and states.autoReExec and _G.AniPixels_ServerHopPending then
+            if queue_on_teleport and states.autoReExec then
                 pcall(function() queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'",true))()') end)
             end
-            _G.AniPixels_ServerHopPending=nil
         end
     end)
 end)
-local function armQueueForHop()
-    pcall(function()
-        if queue_on_teleport and states.autoReExec then
-            _G.AniPixels_ServerHopPending=true
-            queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'",true))()')
-        end
-    end)
-end
+local function armQueue() pcall(function() if queue_on_teleport and states.autoReExec then queue_on_teleport('loadstring(game:HttpGet("'..REEXEC_URL..'",true))()') end end) end
+armQueue()
 task.spawn(function()
+    local wasOn=false
     while true do
         if RUN_GEN~=_G.AniPixels_RunGen then break end
-        task.wait(2)
-        syncRejoinFlag()
+        task.wait(2); syncRejoinFlag()
+        if states.autoReExec and not wasOn then pcall(armQueue) end
+        wasOn=states.autoReExec
     end
 end)
 
@@ -3555,7 +3532,7 @@ task.spawn(function()
                 end
             end
         end)
-        pcall(armQueueForHop)
+        pcall(armQueue)
         _G.AniPixels_ServerHop=true; task.wait(0.3)
         if nextServerId then SLbl.Text="🌐 Hopping..."; pcall(function() TeleportService:TeleportToPlaceInstance(placeId,nextServerId) end)
         else SLbl.Text="🌐 No server found, rejoining..."; pcall(function() TeleportService:Teleport(placeId) end) end
