@@ -763,6 +763,28 @@ local function findTrialsModel()
         local lc=workspace.LocalCoolers
         if lc then
             local kids=lc:GetChildren()
+            -- Priority 1: if any current LocalCoolers model has BossLabel, use that exact model.
+            for i=#kids,1,-1 do
+                local m=kids[i]
+                if m then
+                    local hasBossLabel=false
+                    local directGui=m:FindFirstChild("Gui")
+                    if directGui and directGui:FindFirstChild("BossLabel") then
+                        hasBossLabel=true
+                    else
+                        for _,d in ipairs(m:GetDescendants()) do
+                            if d.Name=="BossLabel" then
+                                hasBossLabel=true
+                                break
+                            end
+                        end
+                    end
+                    if hasBossLabel then
+                        result=m
+                        return
+                    end
+                end
+            end
             -- Newer/current trial target is usually appended later; prefer last alive model.
             for i=#kids,1,-1 do
                 local m=kids[i]
@@ -3299,6 +3321,27 @@ task.spawn(function()
                 end
                 return (tonumber(waveNow) or 0)>=100
             end
+            local function isTrialsBossModel(model)
+                if not (model and model.Parent) then return false end
+                if tostring(model.Name)=="Cooler Final Form" then return true end
+                local ok,isBoss=pcall(function() return model:GetAttribute("IsBoss") end)
+                if ok and isBoss==true then return true end
+                local hasBossLabel=false
+                pcall(function()
+                    local gui=model:FindFirstChild("Gui")
+                    if gui and gui:FindFirstChild("BossLabel") then
+                        hasBossLabel=true
+                        return
+                    end
+                    for _,d in ipairs(model:GetDescendants()) do
+                        if d.Name=="BossLabel" then
+                            hasBossLabel=true
+                            break
+                        end
+                    end
+                end)
+                return hasBossLabel
+            end
             local currentWave=getWave(); local sessionAlive=true
             local lastTp=0
             local missingWaveGuiTicks=0
@@ -3365,6 +3408,20 @@ task.spawn(function()
                         end
                         TSLbl.Text="🚪 Leaving at Wave "..currentWave.."..."
                         pcall(function() TrialsMode:FireServer({Exit=true}) end); task.wait(1.5); sessionAlive=false; break
+                    end
+                end
+                -- Final pre-battle team check on the freshest LocalCoolers target.
+                local freshModel=findTrialsModel()
+                if freshModel then
+                    battleModel=freshModel
+                    pcall(function() coolerIndex=battleModel:GetAttribute("CoolerIndex") or coolerIndex end)
+                end
+                if states.autoTrialsBossTeam then
+                    local desiredTeam=(isTrialsBossModel(battleModel) or isTrialsBossNow(currentWave)) and "TrialsBosses" or "Trials"
+                    if desiredTeam~=activeTrialTeamKey then
+                        applyPresetTeam(desiredTeam)
+                        task.wait(0.15)
+                        activeTrialTeamKey=desiredTeam
                     end
                 end
                 pcall(function() RequestBattle:FireServer(nil,coolerIndex) end)
