@@ -3287,6 +3287,10 @@ task.spawn(function()
                     if leaveWave>=100 and not isObjectiveComplete() then
                         TSLbl.Text="🎯 Wave "..currentWave.." reached, farming until objective complete..."
                     else
+                        if leaveWave>=100 then
+                            TSLbl.Text="✅ Objective complete — leaving in 3s..."
+                            task.wait(3)
+                        end
                         TSLbl.Text="🚪 Leaving at Wave "..currentWave.."..."
                         pcall(function() TrialsMode:FireServer({Exit=true}) end); task.wait(1.5); sessionAlive=false; break
                     end
