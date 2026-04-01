@@ -3281,12 +3281,11 @@ task.spawn(function()
                 TSLbl.Text="⚔ Wave "..currentWave.."/"..(states.trialsNoLeave and "∞" or tostring(leaveWave))
                 if not states.trialsNoLeave and currentWave>=leaveWave then
                     if leaveWave>=100 and not isObjectiveComplete() then
-                        TSLbl.Text="🎯 Wave "..currentWave.." reached, waiting objective completion..."
-                        task.wait(0.5)
-                        continue
+                        TSLbl.Text="🎯 Wave "..currentWave.." reached, farming until objective complete..."
+                    else
+                        TSLbl.Text="🚪 Leaving at Wave "..currentWave.."..."
+                        pcall(function() TrialsMode:FireServer({Exit=true}) end); task.wait(1.5); sessionAlive=false; break
                     end
-                    TSLbl.Text="🚪 Leaving at Wave "..currentWave.."..."
-                    pcall(function() TrialsMode:FireServer({Exit=true}) end); task.wait(1.5); sessionAlive=false; break
                 end
                 pcall(function() RequestBattle:FireServer(nil,coolerIndex) end)
                 local appeared=false
