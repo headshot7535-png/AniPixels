@@ -3230,6 +3230,10 @@ task.spawn(function()
                 local _,ol=getTrialsLabels()
                 if not (ol and ol.Parent) then return true end
                 local txt=tostring(ol.ContentText or ol.Text or "")
+                local lower=txt:lower()
+                if lower:find("complete",1,true) or lower:find("completed",1,true) or lower:find("done",1,true) then
+                    return true
+                end
                 local a,b=txt:match("%((%d+)%s*/%s*(%d+)%)")
                 local done=tonumber(a)
                 local need=tonumber(b)
