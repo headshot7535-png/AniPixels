@@ -627,7 +627,7 @@ FTab:Button("🌀","TP to Merge Circle","Teleport to Magic Circle",C.green,funct
     end)
 end)
 FTab:Button("💬","Join Discord","Copies invite link to clipboard",C.accent,function()
-    local invite="https://discord.gg/vSTmMTyw"
+    local invite="https://discord.gg/ErGUHtVK"
     local copied=false
     pcall(function()
         if setclipboard then
