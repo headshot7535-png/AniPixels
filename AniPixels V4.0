@@ -92,7 +92,7 @@ local states = {
     autoAreaBosses=false,
     mergeActive=false,
     farmNoTP=false, bossNoTP=false, farmActive=false, autoFarmIndex=false, indexTrackVariants=false, autoFarmSparking=false, autoFarmRifts=false, riftNoTP=false, autoRiftBossTeam=false,
-    trialsActive=false, trialsNoTP=false, trialsNoLeave=false, autoTrialsBossTeam=false,
+    trialsActive=false, trialsNoTP=false, trialsNoLeave=false, autoTrialsBossTeam=false, trialsFast=false,
     serverHop=false, dragonBall=false, doorUnlock=false,
     fastForward=false, autoReExec=false, autoPVP=false, autoDailyQuest=false,
 }
@@ -146,7 +146,7 @@ local farmTeam       = {}
 local savedTeams     = {}
 local farmTeamName   = ""
 local isInBattle
-local modePriority = {"AreaBosses","DailyQuest","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}
+local modePriority = {"AreaBosses","DailyQuest","RaidBosses","AutoFarm","Trials","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}
 local PRIORITY_LABELS = {
     AreaBosses="Area Bosses",
     DailyQuest="Daily Quest",
@@ -357,7 +357,7 @@ if LS.modePriority then
             parsed[#parsed+1]=m
         end
     end
-    for _,m in ipairs({"AreaBosses","DailyQuest","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}) do
+    for _,m in ipairs({"AreaBosses","DailyQuest","RaidBosses","AutoFarm","Trials","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}) do
         if not seen[m] then parsed[#parsed+1]=m end
     end
     modePriority=parsed
@@ -453,7 +453,7 @@ local function setModePriority(newOrder)
             parsed[#parsed+1]=m
         end
     end
-    for _,m in ipairs({"AreaBosses","DailyQuest","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}) do
+    for _,m in ipairs({"AreaBosses","DailyQuest","RaidBosses","AutoFarm","Trials","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}) do
         if not seen[m] then parsed[#parsed+1]=m end
     end
     modePriority=parsed
@@ -495,7 +495,7 @@ local function refreshPrioLabel()
     prioLabel.Set("Current: "..modePriorityText())
 end
 PrioTab:Section("Select Priority Slots")
-local prioModeOrder={"AreaBosses","DailyQuest","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}
+local prioModeOrder={"AreaBosses","DailyQuest","RaidBosses","AutoFarm","Trials","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}
 local prioInputs={}
 local function currentPriorityIndex(mode)
     for i,m in ipairs(modePriority) do
@@ -1633,6 +1633,9 @@ TTab:Button("🟡","Intermediate","Use Intermediate trial difficulty",C.gold,fun
 TTab:Button("🔴","Difficult","Use Difficult trial difficulty",C.red,function() setTrialDifficulty("Difficult") end)
 TTab:Toggle("👹 Auto Trials Boss Team","Detect boss phase and switch to TrialsBosses preset",states.autoTrialsBossTeam,function(on)
     states.autoTrialsBossTeam=on; saveSettings()
+end)
+TTab:Toggle("⚡ Fast Trials","Classic runner · uses Difficulty + WaveLabel · same waits as slim script",states.trialsFast,function(on)
+    states.trialsFast=on; saveSettings()
 end)
 TTab:Toggle("🚫 No TP","Don't teleport to trial model",states.trialsNoTP,function(on)
     states.trialsNoTP=on; saveSettings()
@@ -3598,6 +3601,94 @@ task.spawn(function()
                 task.wait(0.6)
                 return
             end
+
+            -- Classic / slim-script path: same Start payload as full (incl. Difficulty), cached WaveLabel, fixed waits, no boss/objective/GUI-restart extras.
+            if states.trialsFast then
+                TSLbl.Text="▶ Starting trial session..."
+                local startOk,startErr=pcall(function()
+                    TrialsMode:FireServer({Start=true,Difficulty=tostring(trialDifficulty or "Normal")})
+                end)
+                if not startOk then TSLbl.Text="❌ TrialsMode: "..tostring(startErr); task.wait(2); return end
+                local battleModel=nil
+                for _=1,6 do battleModel=findTrialsModel(); if battleModel then break end; task.wait(0.5) end
+                if not battleModel then TSLbl.Text="⚠ No cooler model found after 3s"; task.wait(2); return end
+                local coolerIndex=1; pcall(function() coolerIndex=battleModel:GetAttribute("CoolerIndex") or 1 end)
+                applyPresetTeam("Trials"); task.wait(0.2)
+                if not states.trialsNoTP then
+                    pcall(function()
+                        local root=getRoot(); if not root then return end
+                        local hrp=battleModel:FindFirstChild("HumanoidRootPart")
+                        local pos=hrp and hrp.Position or battleModel:GetModelCFrame().Position
+                        root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                    end); task.wait(0.3)
+                end
+                local waveLabel=nil
+                do
+                    local sg=playerGui:FindFirstChild("ScreenGui")
+                    local tf=sg and sg:FindFirstChild("Trials")
+                    waveLabel=tf and tf:FindFirstChild("WaveLabel")
+                end
+                local function getWaveFast()
+                    local wl=waveLabel
+                    if not (wl and wl.Parent) then return 0 end
+                    local n=tonumber((tostring(wl.ContentText or wl.Text or "")):match("%d+"))
+                    return n or 0
+                end
+                local currentWave=getWaveFast(); local sessionAlive=true
+                local lastTp=0
+                while states.trialsActive and sessionAlive do
+                    if RUN_GEN~=_G.AniPixels_RunGen then break end
+                    if not canRunMode("Trials") then
+                        TSLbl.Text="⏸ Leaving Trials — higher-priority mode"
+                        pcall(function() TrialsMode:FireServer({Exit=true}) end)
+                        task.wait(0.6)
+                        sessionAlive=false
+                        break
+                    end
+                    if not states.trialsNoTP then
+                        local now=os.clock()
+                        if now-lastTp>2 then
+                            lastTp=now
+                            pcall(function()
+                                local root=getRoot(); if not root then return end
+                                local hrp=battleModel:FindFirstChild("HumanoidRootPart")
+                                local pos=hrp and hrp.Position or battleModel:GetModelCFrame().Position
+                                if (root.Position-pos).Magnitude>25 then
+                                    root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                                end
+                            end)
+                        end
+                    end
+                    currentWave=getWaveFast()
+                    TSLbl.Text="⚔ Wave "..currentWave.."/"..(states.trialsNoLeave and "∞" or tostring(leaveWave))
+                    if not states.trialsNoLeave and currentWave>=leaveWave then
+                        TSLbl.Text="🚪 Leaving at Wave "..currentWave.."..."
+                        pcall(function() TrialsMode:FireServer({Exit=true}) end); task.wait(1.5); sessionAlive=false; break
+                    end
+                    pcall(function() RequestBattle:FireServer(nil,coolerIndex) end)
+                    local appeared=false
+                    for _=1,10 do task.wait(0.5); if isInBattle() then appeared=true; break end end
+                    if appeared then
+                        local t=0
+                        while isInBattle() and states.trialsActive do
+                            if RUN_GEN~=_G.AniPixels_RunGen then break end
+                            if not canRunMode("Trials") then
+                                TSLbl.Text="⏸ Leaving Trials — higher-priority mode"
+                                pcall(function() TrialsMode:FireServer({Exit=true}) end)
+                                task.wait(0.6)
+                                sessionAlive=false
+                                break
+                            end
+                            task.wait(0.3); t=t+0.3; if t>300 then sessionAlive=false; break end
+                        end
+                        if not sessionAlive then break end
+                        if trialsDelay>0 then TSLbl.Text="⏳ Spawning... ("..trialsDelay.."s)"; task.wait(trialsDelay) end
+                    else TSLbl.Text="⚠ Battle didn't appear, retrying..."; task.wait(trialsRetryDelay) end
+                end
+                task.wait(1)
+                return
+            end
+
             if not trialsPreStarted then
                 TSLbl.Text="▶ Starting trial session..."
                 local startOk,startErr=pcall(function()
@@ -3659,7 +3750,6 @@ task.spawn(function()
                     if tostring(bm.Name)=="Cooler Final Form" then return true end
                     local ok,isBoss=pcall(function() return bm:GetAttribute("IsBoss") end)
                     if ok and isBoss==true then return true end
-                    -- Only trust BossLabel on the currently selected Trials model (last/current LocalCoolers entry).
                     local bossLabelFound=false
                     pcall(function()
                         local gui=bm:FindFirstChild("Gui")
@@ -3674,7 +3764,6 @@ task.spawn(function()
                 local _,ol=getTrialsLabels()
                 if ol and ol.Parent then
                     local ot=tostring(ol.ContentText or ol.Text or ""):lower()
-                    -- Keep this strict to avoid false positives from normal "Defeat Metal Cooler" objectives.
                     if ot:find("final form",1,true) then
                         return true
                     end
@@ -3702,6 +3791,13 @@ task.spawn(function()
             local missingWaveGuiTicks=0
             while states.trialsActive and sessionAlive do
                 if RUN_GEN~=_G.AniPixels_RunGen then break end
+                if not canRunMode("Trials") then
+                    TSLbl.Text="⏸ Leaving Trials — higher-priority mode"
+                    pcall(function() TrialsMode:FireServer({Exit=true}) end)
+                    task.wait(0.6)
+                    sessionAlive=false
+                    break
+                end
                 if not states.trialsNoTP then
                     local now=os.clock()
                     if now-lastTp>2 then
@@ -3765,7 +3861,6 @@ task.spawn(function()
                         pcall(function() TrialsMode:FireServer({Exit=true}) end); task.wait(1.5); sessionAlive=false; break
                     end
                 end
-                -- Final pre-battle team check on the freshest LocalCoolers target.
                 local freshModel=findTrialsModel()
                 if freshModel then
                     battleModel=freshModel
@@ -3786,6 +3881,13 @@ task.spawn(function()
                     local t=0
                     while isInBattle() and states.trialsActive do
                         if RUN_GEN~=_G.AniPixels_RunGen then break end
+                        if not canRunMode("Trials") then
+                            TSLbl.Text="⏸ Leaving Trials — higher-priority mode"
+                            pcall(function() TrialsMode:FireServer({Exit=true}) end)
+                            task.wait(0.6)
+                            sessionAlive=false
+                            break
+                        end
                         if states.autoTrialsBossTeam then
                             local desiredTeam=isTrialsBossNow(currentWave) and "TrialsBosses" or "Trials"
                             if desiredTeam~=activeTrialTeamKey then
@@ -3795,6 +3897,7 @@ task.spawn(function()
                         end
                         task.wait(0.3); t=t+0.3; if t>300 then sessionAlive=false; break end
                     end
+                    if not sessionAlive then break end
                     if trialsDelay>0 then TSLbl.Text="⏳ Spawning... ("..trialsDelay.."s)"; task.wait(trialsDelay) end
                 else TSLbl.Text="⚠ Battle didn't appear, retrying..."; task.wait(trialsRetryDelay) end
             end
