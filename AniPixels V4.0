@@ -18,6 +18,8 @@ end
 
 -- ── Load NexusLib (local file or URL) ─────────────────────────
 -- Use "NexusLib.lua" in your executor script folder, or set URL to your hosted NexusLib v1.2.
+-- NexusLib's Firebase "online" counter uses blocking HTTP every poll — leave false to avoid periodic hitches.
+_G.NexusLib_EnablePresence = false
 local NEXUSLIB_URL = "https://raw.githubusercontent.com/headshot7535-png/Nexuslib/main/Nexuslib"
 local Lib
 if readfile and pcall then
@@ -92,7 +94,7 @@ local states = {
     farmNoTP=false, bossNoTP=false, farmActive=false, autoFarmIndex=false, indexTrackVariants=false, autoFarmSparking=false, autoFarmRifts=false, riftNoTP=false, autoRiftBossTeam=false,
     trialsActive=false, trialsNoTP=false, trialsNoLeave=false, autoTrialsBossTeam=false,
     serverHop=false, dragonBall=false, doorUnlock=false,
-    fastForward=false, autoReExec=false, autoPVP=false,
+    fastForward=false, autoReExec=false, autoPVP=false, autoDailyQuest=false,
 }
 -- Full bright: apply from toggle / load only (avoids a permanent Heartbeat listener).
 local _fbOrig={
@@ -144,9 +146,10 @@ local farmTeam       = {}
 local savedTeams     = {}
 local farmTeamName   = ""
 local isInBattle
-local modePriority = {"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}
+local modePriority = {"AreaBosses","DailyQuest","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}
 local PRIORITY_LABELS = {
     AreaBosses="Area Bosses",
+    DailyQuest="Daily Quest",
     RaidBosses="Raid Bosses",
     Trials="Trials",
     AutoFarm="Auto Farm",
@@ -155,6 +158,7 @@ local PRIORITY_LABELS = {
     AutoFarmRifts="Auto Farm Rifts",
     PVP="PVP",
 }
+local dailyQuestPriorityActive=false
 AREA_BOSS_DEFAULTS = AREA_BOSS_DEFAULTS or {"Pain","Kars","Final Form Muzan","Awakened Mahito"}
 RIFT_RANKS = RIFT_RANKS or {"F","D","C","B","A","S"}
 RAID_BOSS_NAME_SET = RAID_BOSS_NAME_SET or {
@@ -345,7 +349,7 @@ if LS.hopDelay       then hopDelay=LS.hopDelay end
 if LS.mergeThreshold then mergeThreshold=LS.mergeThreshold end
 if LS.mergeMaxTier~=nil then mergeMaxTier=math.clamp(math.floor(LS.mergeMaxTier),0,7) end
 if LS.modePriority then
-    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,AutoFarmIndex=true,AutoFarmSparking=true,AutoFarmRifts=true,PVP=true}
+    local allowed={AreaBosses=true,DailyQuest=true,RaidBosses=true,Trials=true,AutoFarm=true,AutoFarmIndex=true,AutoFarmSparking=true,AutoFarmRifts=true,PVP=true}
     local parsed,seen={},{}
     for m in (LS.modePriority..","):gmatch("([^,]+),") do
         if allowed[m] and not seen[m] then
@@ -353,7 +357,7 @@ if LS.modePriority then
             parsed[#parsed+1]=m
         end
     end
-    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}) do
+    for _,m in ipairs({"AreaBosses","DailyQuest","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}) do
         if not seen[m] then parsed[#parsed+1]=m end
     end
     modePriority=parsed
@@ -441,7 +445,7 @@ local function modePriorityText()
     return table.concat(t," > ")
 end
 local function setModePriority(newOrder)
-    local allowed={AreaBosses=true,RaidBosses=true,Trials=true,AutoFarm=true,AutoFarmIndex=true,AutoFarmSparking=true,AutoFarmRifts=true,PVP=true}
+    local allowed={AreaBosses=true,DailyQuest=true,RaidBosses=true,Trials=true,AutoFarm=true,AutoFarmIndex=true,AutoFarmSparking=true,AutoFarmRifts=true,PVP=true}
     local seen,parsed={},{}
     for _,m in ipairs(newOrder or {}) do
         if allowed[m] and not seen[m] then
@@ -449,7 +453,7 @@ local function setModePriority(newOrder)
             parsed[#parsed+1]=m
         end
     end
-    for _,m in ipairs({"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}) do
+    for _,m in ipairs({"AreaBosses","DailyQuest","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}) do
         if not seen[m] then parsed[#parsed+1]=m end
     end
     modePriority=parsed
@@ -491,7 +495,7 @@ local function refreshPrioLabel()
     prioLabel.Set("Current: "..modePriorityText())
 end
 PrioTab:Section("Select Priority Slots")
-local prioModeOrder={"AreaBosses","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}
+local prioModeOrder={"AreaBosses","DailyQuest","RaidBosses","Trials","AutoFarm","AutoFarmIndex","AutoFarmSparking","AutoFarmRifts","PVP"}
 local prioInputs={}
 local function currentPriorityIndex(mode)
     for i,m in ipairs(modePriority) do
@@ -575,6 +579,11 @@ if states.fastForward then
     end)
 end
 
+FTab:Section("Daily Quest")
+FTab:Toggle("📅 Auto Daily Quest","Fuse (farm fastest campaign pet), raid & rift dailies with correct teams, then claim. Reorder “Daily Quest” on the Priority tab.",states.autoDailyQuest,function(on)
+    states.autoDailyQuest=on; saveSettings()
+end)
+
 FTab:Section("Script")
 FTab:Toggle("🔁 Auto Rejoin","Re-executes on disconnect or hop",states.autoReExec,function(on)
     states.autoReExec=on; saveSettings()
@@ -654,6 +663,10 @@ end)
 local RequestBattle = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RequestBattle")
 local SquadUpdate = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("SquadUpdate")
 local RemotePVP = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("RemotePVP")
+local GetDailyData = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("GetDailyData")
+local ClaimDailyReward = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("ClaimDailyReward")
+local UpdateDailyInterface = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("UpdateDailyInterface")
+local TrialsMode = game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("TrialsMode")
 
 -- Team manager helpers
 local function readEquippedPets()
@@ -763,40 +776,12 @@ local function findTrialsModel()
         local lc=workspace.LocalCoolers
         if lc then
             local kids=lc:GetChildren()
-            -- Priority 1: if any current LocalCoolers model has BossLabel, use that exact model.
-            for i=#kids,1,-1 do
-                local m=kids[i]
-                if m then
-                    local hasBossLabel=false
-                    local directGui=m:FindFirstChild("Gui")
-                    if directGui and directGui:FindFirstChild("BossLabel") then
-                        hasBossLabel=true
-                    else
-                        for _,d in ipairs(m:GetDescendants()) do
-                            if d.Name=="BossLabel" then
-                                hasBossLabel=true
-                                break
-                            end
-                        end
-                    end
-                    if hasBossLabel then
-                        result=m
-                        return
-                    end
-                end
+            -- User preference: always battle the first Metal Cooler in LocalCoolers.
+            if kids[1] then
+                result=kids[1]
+                return
             end
-            -- Newer/current trial target is usually appended later; prefer last alive model.
-            for i=#kids,1,-1 do
-                local m=kids[i]
-                if m then
-                    local h=m:FindFirstChildOfClass("Humanoid")
-                    if (not h) or h.Health>0 then
-                        result=m
-                        return
-                    end
-                end
-            end
-            result=kids[#kids]
+            result=kids[1] or kids[#kids]
             return
         end
     end)
@@ -953,6 +938,72 @@ function findJoinableRiftGate()
     end
     return nil,nil
 end
+recentRiftSpawns = recentRiftSpawns or {}
+riftWasActive = riftWasActive or {}
+function getGateRiftMapName(gate)
+    if not gate then return "Unknown Rift" end
+    local attrNames={"RiftName","riftName","MapName","RiftUnit"}
+    for _,a in ipairs(attrNames) do
+        local ok,val=pcall(function() return gate:GetAttribute(a) end)
+        if ok and type(val)=="string" and val~="" then
+            return val
+        end
+    end
+    local marker=gate:FindFirstChild("RiftMarker")
+    if marker then
+        local rn=marker:FindFirstChild("RiftName")
+        local txt=tostring((rn and (rn.Text or rn.ContentText)) or "")
+        if txt~="" then
+            return txt
+        end
+    end
+    return tostring(gate.Name or "Unknown Rift")
+end
+function pushRecentRiftSpawn(gate, rank)
+    if not gate then return end
+    local mapName=getGateRiftMapName(gate)
+    local line=string.format("%s [%s]  %s", mapName, tostring(rank or "?"), os.date("%H:%M:%S"))
+    table.insert(recentRiftSpawns,1,line)
+    if #recentRiftSpawns>5 then
+        table.remove(recentRiftSpawns,#recentRiftSpawns)
+    end
+end
+local _riftPollLast=0
+function pollRiftSpawnHistory()
+    local now=os.clock()
+    if now-_riftPollLast<2.5 then return end
+    _riftPollLast=now
+    local folder=workspace:FindFirstChild("RiftSpawns")
+    if not folder then return end
+    local alive={}
+    for _,gate in ipairs(folder:GetChildren()) do
+        alive[gate]=true
+        local active=isRiftGateActive(gate)
+        local prev=riftWasActive[gate] == true
+        if active and not prev then
+            pushRecentRiftSpawn(gate,getGateRank(gate))
+        end
+        riftWasActive[gate]=active
+    end
+    for gate,_ in pairs(riftWasActive) do
+        if not alive[gate] then
+            riftWasActive[gate]=nil
+        end
+    end
+end
+function preloadActiveRiftSpawns()
+    local folder=workspace:FindFirstChild("RiftSpawns")
+    if not folder then return end
+    local seeded=0
+    for _,gate in ipairs(folder:GetChildren()) do
+        local active=isRiftGateActive(gate)
+        riftWasActive[gate]=active
+        if active and seeded<5 then
+            pushRecentRiftSpawn(gate,getGateRank(gate))
+            seeded=seeded+1
+        end
+    end
+end
 function getRiftPetsGroupedByMap()
     local groups={}
     pcall(function()
@@ -997,18 +1048,17 @@ function isRiftBossModel(model)
     local ok3,rd=pcall(function() return model:GetAttribute("RiftDifficulty") end)
     if ok3 and rd~=nil then
         local r=tostring(rd):upper()
-        -- Higher-rank rifts often present as boss units without IsBoss/BossUnit attrs on the campaign model.
         if r=="A" or r=="S" then return true end
     end
     local gui=model:FindFirstChild("Gui")
     if gui and gui:FindFirstChild("BossLabel") then return true end
-    -- Fallback: some boss markers are nested Billboard/Text descendants.
-    for _,d in ipairs(model:GetDescendants()) do
-        if d:IsA("TextLabel") then
-            local t=tostring(d.ContentText or d.Text or ""):upper()
-            if t:find("BOSS",1,true) then return true end
-        elseif d.Name=="BossLabel" then
-            return true
+    if model:FindFirstChild("BossLabel",true)~=nil then return true end
+    if gui then
+        for _,d in ipairs(gui:GetDescendants()) do
+            if d:IsA("TextLabel") then
+                local t=tostring(d.ContentText or d.Text or ""):upper()
+                if t:find("BOSS",1,true) then return true end
+            end
         end
     end
     local n=tostring(model.Name or ""):lower()
@@ -1142,7 +1192,7 @@ local function getMissingIndexEntries(ownedName)
 end
 local function countMissingIndexTargets()
     local now=os.clock()
-    if now-_missingIndexAt<1 and _missingIndexCount>=0 then
+    if now-_missingIndexAt<2.5 and _missingIndexCount>=0 then
         return _missingIndexCount
     end
     local ownedName=buildOwnedNameSet()
@@ -1172,8 +1222,18 @@ local function hasSafariSparkingTarget()
     end
     return false
 end
+local _sparkScanLast=0
+local _sparkScanVal=false
+local function hasSafariSparkingTargetCached()
+    local now=os.clock()
+    if now-_sparkScanLast<3 then return _sparkScanVal end
+    _sparkScanVal=hasSafariSparkingTarget()
+    _sparkScanLast=now
+    return _sparkScanVal
+end
 
 local function isModeBlocking(mode)
+    if mode=="DailyQuest" then return states.autoDailyQuest and dailyQuestPriorityActive end
     if mode=="AreaBosses" then return states.autoAreaBosses and hasAliveAreaBoss() end
     if mode=="RaidBosses" then return hasAliveSelectedRaidBoss() end
     if mode=="Trials" then return states.trialsActive end
@@ -1199,12 +1259,14 @@ local function canRunMode(mode)
     return true
 end
 
+-- Chunk-level: error loops below assign this; Status UI reads it (must not be trapped in an inner block).
+local statusLastError="None"
+
 -- ============================================================
 --  STATUS TAB  — live telemetry
 -- ============================================================
 do
 STab:Section("Live Runtime")
-local statusLastError="None"
 STab:Button("🧹","Clear Last Error","Resets the status error tracker",C.accent,function()
     statusLastError="None"
 end)
@@ -1245,9 +1307,24 @@ logLbl.BackgroundTransparency=1; logLbl.TextColor3=C.text; logLbl.Font=Enum.Font
 logLbl.TextXAlignment=Enum.TextXAlignment.Left; logLbl.TextYAlignment=Enum.TextYAlignment.Top
 logLbl.TextWrapped=true; logLbl.Text="(waiting for actions...)"
 
+local riftCard=Instance.new("Frame",PStatus)
+riftCard.Size=UDim2.new(1,-10,0,110); riftCard.BackgroundColor3=C.card; riftCard.BorderSizePixel=0; riftCard.LayoutOrder=210
+Instance.new("UICorner",riftCard).CornerRadius=UDim.new(0,10)
+Instance.new("UIStroke",riftCard).Color=C.border
+local riftTitle=Instance.new("TextLabel",riftCard)
+riftTitle.Text="Last 5 Rift Spawns"; riftTitle.Size=UDim2.new(1,-16,0,16); riftTitle.Position=UDim2.new(0,10,0,6)
+riftTitle.BackgroundTransparency=1; riftTitle.TextColor3=C.sub; riftTitle.Font=Enum.Font.GothamBold; riftTitle.TextSize=9; riftTitle.TextXAlignment=Enum.TextXAlignment.Left
+local riftLbl=Instance.new("TextLabel",riftCard)
+riftLbl.Size=UDim2.new(1,-16,1,-26); riftLbl.Position=UDim2.new(0,10,0,22)
+riftLbl.BackgroundTransparency=1; riftLbl.TextColor3=C.text; riftLbl.Font=Enum.Font.Code; riftLbl.TextSize=9
+riftLbl.TextXAlignment=Enum.TextXAlignment.Left; riftLbl.TextYAlignment=Enum.TextYAlignment.Top
+riftLbl.TextWrapped=true; riftLbl.Text="(waiting for rift spawns...)"
+preloadActiveRiftSpawns()
+
 local startedAt=os.clock()
 local lastNow=""
 local recent={}
+local lastStatusSnap=""
 local function pushRecent(s)
     if not s or s=="" then return end
     if s==lastNow then return end
@@ -1275,7 +1352,7 @@ task.spawn(function()
         local farmCount=0; for _ in pairs(farmTargets) do farmCount=farmCount+1 end
         local doorCount=0; for _ in pairs(selectedDoors) do doorCount=doorCount+1 end
         local miss=countMissingIndexTargets()
-        local sparkState=(not states.autoFarmSparking and "OFF") or (hasSafariSparkingTarget() and "FOUND") or "WAITING"
+        local sparkState=(not states.autoFarmSparking and "OFF") or (hasSafariSparkingTargetCached() and "FOUND") or "WAITING"
 
         stNow.Text="Now: "..current
         stNow.TextColor3=(current:find("❌",1,true) and C.red) or (current:find("⚠",1,true) and C.orange) or (current:find("⏸",1,true) and C.gold) or C.text
@@ -1294,8 +1371,17 @@ task.spawn(function()
         stSparking.TextColor3=(sparkState=="FOUND" and C.green) or (sparkState=="WAITING" and C.gold) or C.sub
         stPerf.Text=string.format("Uptime: %ds",math.floor(os.clock()-startedAt))
         stPerf.TextColor3=C.sub
-        pushRecent(current)
-        task.wait(1.25)
+        pollRiftSpawnHistory()
+        if #recentRiftSpawns>0 then
+            riftLbl.Text=table.concat(recentRiftSpawns,"\n")
+        else
+            riftLbl.Text="(waiting for rift spawns...)"
+        end
+        if current~=lastStatusSnap then
+            lastStatusSnap=current
+            pushRecent(current)
+        end
+        task.wait(2.1)
     end
 end)
 end
@@ -1561,11 +1647,10 @@ end)
 
 -- ============================================================
 --  MERGE TAB  — custom UI (complex pet picker)
+--  Wrapped in its own function so Luau's 200 local register limit is not shared with the whole script.
 -- ============================================================
-local updateChainPreview
 local MSStatus, SearchBox, buildPetList, updateChainPreview
-
-do
+;(function()
 local MergeStatusCard=Instance.new("Frame",PMerge)
 MergeStatusCard.Size=UDim2.new(1,-10,0,70); MergeStatusCard.BackgroundColor3=C.card
 MergeStatusCard.BorderSizePixel=0; MergeStatusCard.LayoutOrder=1
@@ -1904,7 +1989,7 @@ end
 SearchBox:GetPropertyChangedSignal("Text"):Connect(function() buildPetList(SearchBox.Text) end)
 RefreshBtn2.MouseButton1Click:Connect(function() buildPetList(SearchBox.Text) end)
 task.delay(1.2,function() buildPetList("") end)
-end -- merge do
+end)()
 
 -- ============================================================
 --  MERGE LOOP LOGIC
@@ -1964,6 +2049,19 @@ local function getActiveMergeTier()
     return nil,nil,nil
 end
 
+-- Rebuilding the merge pet scroll is expensive (inventory scan + dozens of UI rows).
+-- Debounce so rapid auto-merge does not freeze the client every 0.4s.
+local _mergePetListDebounceTok=0
+local function scheduleMergePetListRefresh()
+    _mergePetListDebounceTok=_mergePetListDebounceTok+1
+    local tok=_mergePetListDebounceTok
+    task.delay(2.2,function()
+        if tok~=_mergePetListDebounceTok then return end
+        if RUN_GEN~=_G.AniPixels_RunGen then return end
+        pcall(function() buildPetList(SearchBox.Text) end)
+    end)
+end
+
 task.spawn(function()
     local activeRiftTeamKey="Rifts"
     while true do
@@ -1988,7 +2086,7 @@ task.spawn(function()
                         end
                     end
                     task.wait(0.4)
-                    buildPetList(SearchBox.Text)
+                    scheduleMergePetListRefresh()
                 else
                     local names={}; for n,_ in pairs(mergeTargets) do names[#names+1]=n end
                     MSStatus.Text="⏳ Waiting · "..table.concat(names,", ").." (need x"..mergeThreshold.." up to "..getTierLabel(mergeMaxTier)..")"
@@ -2053,7 +2151,12 @@ isInBattle=function()
     return bf and bf.Parent and bf.Visible or false
 end
 
-do
+-- Used by door-unlock loop below this IIFE; must be chunk locals, not trapped inside.
+local DOOR_CONFIG={}
+local DoorStatusLbl
+local checkOwned
+
+;(function()
 local FarmStatusCard=Instance.new("Frame",PFarm)
 FarmStatusCard.Size=UDim2.new(1,-10,0,60); FarmStatusCard.BackgroundColor3=C.card
 FarmStatusCard.BorderSizePixel=0; FarmStatusCard.LayoutOrder=1
@@ -2223,7 +2326,6 @@ refreshIndexCards()
 end
 
 -- Door unlock
-local DOOR_CONFIG={}
 pcall(function()
     local doors=workspace:WaitForChild("Map",5):WaitForChild("Doors",5)
     for _,door in ipairs(doors:GetChildren()) do
@@ -2234,8 +2336,6 @@ pcall(function()
     end
 end)
 
-local DoorStatusLbl
-local checkOwned
 do
 local DoorSearchCard=Instance.new("Frame",PFarm); DoorSearchCard.Size=UDim2.new(1,-10,0,32); DoorSearchCard.BackgroundColor3=C.card; DoorSearchCard.BorderSizePixel=0; DoorSearchCard.LayoutOrder=5; Instance.new("UICorner",DoorSearchCard).CornerRadius=UDim.new(0,10); Instance.new("UIStroke",DoorSearchCard).Color=C.border
 local DoorSearchBox=Instance.new("TextBox",DoorSearchCard); DoorSearchBox.Size=UDim2.new(1,-10,1,0); DoorSearchBox.Position=UDim2.new(0,8,0,0); DoorSearchBox.BackgroundTransparency=1; DoorSearchBox.TextColor3=C.text; DoorSearchBox.Font=Enum.Font.Code; DoorSearchBox.TextSize=10; DoorSearchBox.PlaceholderText="🔍 Search doors..."; DoorSearchBox.Text=""; DoorSearchBox.TextXAlignment=Enum.TextXAlignment.Left
@@ -2769,13 +2869,13 @@ task.spawn(function()
     end
 end)
 
-end -- farm do block
+end)()
 
 -- ============================================================
 --  DRAGON BALL TAB  — full custom UI
 -- ============================================================
 local DBStatus, DBFound, dbDots, DBLog, setDragon
-do
+;(function()
 local DBStatusCard=Instance.new("Frame",PDragon)
 DBStatusCard.Size=UDim2.new(1,-10,0,72); DBStatusCard.BackgroundColor3=C.card; DBStatusCard.BorderSizePixel=0; DBStatusCard.LayoutOrder=1; Instance.new("UICorner",DBStatusCard).CornerRadius=UDim.new(0,10)
 local dbsc=Instance.new("UIStroke",DBStatusCard); dbsc.Color=C.border; dbsc.Thickness=1
@@ -2811,7 +2911,7 @@ for i=1,7 do
     dbDots[i]=dot
 end
 DBLog=Instance.new("TextLabel",PDragon); DBLog.Size=UDim2.new(1,-10,0,20); DBLog.BackgroundTransparency=1; DBLog.LayoutOrder=3; DBLog.TextColor3=C.sub; DBLog.Font=Enum.Font.Code; DBLog.TextSize=9; DBLog.TextXAlignment=Enum.TextXAlignment.Left; DBLog.Text="  Waiting..."
-end -- dragon tab UI
+end)()
 
 
 -- ============================================================
@@ -2909,58 +3009,63 @@ end
 rebuildNoclipParts(getChar())
 
 local _lastNoclipPrune=0
--- Heartbeat once/frame; Stepped can run multiple times per frame and caused heavy stutter with noclip.
+local _lastGodHb=0
+-- Single Heartbeat: skip entirely when nothing needs per-frame work (default: all features off).
 RunService.Heartbeat:Connect(function()
     if RUN_GEN~=_G.AniPixels_RunGen then return end
-    if not states.noclip then return end
-    local now=os.clock()
-    if now-_lastNoclipPrune>5 then
-        _lastNoclipPrune=now
-        for i=#noclipParts,1,-1 do
+    if not states.noclip and not states.godMode and not states.fly then
+        if flyBV then flyBV:Destroy(); flyBV=nil end
+        if flyBG then flyBG:Destroy(); flyBG=nil end
+        return
+    end
+    if states.noclip then
+        local now=os.clock()
+        if now-_lastNoclipPrune>5 then
+            _lastNoclipPrune=now
+            for i=#noclipParts,1,-1 do
+                local p=noclipParts[i]
+                if not (p and p.Parent) then table.remove(noclipParts,i) end
+            end
+        end
+        for i=1,#noclipParts do
             local p=noclipParts[i]
-            if not (p and p.Parent) then table.remove(noclipParts,i) end
+            if p and p.Parent then p.CanCollide=false end
         end
     end
-    for i=1,#noclipParts do
-        local p=noclipParts[i]
-        if p and p.Parent then p.CanCollide=false end
+    if states.godMode then
+        local now=os.clock()
+        if now-_lastGodHb>=0.5 then
+            _lastGodHb=now
+            local h=getHuman()
+            if h then
+                if h.MaxHealth~=math.huge then h.MaxHealth=math.huge end
+                if h.Health~=math.huge then h.Health=math.huge end
+            end
+        end
     end
-end)
-
--- god mode: throttle to reduce heartbeat work
-local _lastGod=0
-RunService.Heartbeat:Connect(function()
-    if RUN_GEN~=_G.AniPixels_RunGen then return end
-    if not states.godMode then return end
-    local now=os.clock()
-    if now-_lastGod < 0.5 then return end
-    _lastGod=now
-    local h=getHuman()
-    if h then
-        if h.MaxHealth~=math.huge then h.MaxHealth=math.huge end
-        if h.Health~=math.huge then h.Health=math.huge end
-    end
-end)
-RunService.Heartbeat:Connect(function()
-    if RUN_GEN~=_G.AniPixels_RunGen then return end
     if states.fly then
-        local root=getRoot(); if not root then return end
-        if not flyBV then flyBV=Instance.new("BodyVelocity",root); flyBV.MaxForce=Vector3.new(1e5,1e5,1e5); flyBV.Velocity=Vector3.zero end
-        if not flyBG then flyBG=Instance.new("BodyGyro",root); flyBG.MaxTorque=Vector3.new(1e5,1e5,1e5); flyBG.D=100 end
-        local cam=workspace.CurrentCamera; local spd=60; local mv=Vector3.zero
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then mv=mv+cam.CFrame.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then mv=mv-cam.CFrame.LookVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then mv=mv-cam.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then mv=mv+cam.CFrame.RightVector end
-        if UserInputService:IsKeyDown(Enum.KeyCode.E) then mv=mv+Vector3.new(0,1,0) end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Q) then mv=mv-Vector3.new(0,1,0) end
-        if mv.Magnitude>0 then mv=mv.Unit end
-        flyBV.Velocity=mv*spd; flyBG.CFrame=cam.CFrame
-        local h=getHuman()
-        if h and h:GetState()~=Enum.HumanoidStateType.Physics then
-            h:ChangeState(Enum.HumanoidStateType.Physics)
+        local root=getRoot()
+        if root then
+            if not flyBV then flyBV=Instance.new("BodyVelocity",root); flyBV.MaxForce=Vector3.new(1e5,1e5,1e5); flyBV.Velocity=Vector3.zero end
+            if not flyBG then flyBG=Instance.new("BodyGyro",root); flyBG.MaxTorque=Vector3.new(1e5,1e5,1e5); flyBG.D=100 end
+            local cam=workspace.CurrentCamera; local spd=60; local mv=Vector3.zero
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then mv=mv+cam.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then mv=mv-cam.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then mv=mv-cam.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then mv=mv+cam.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.E) then mv=mv+Vector3.new(0,1,0) end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Q) then mv=mv-Vector3.new(0,1,0) end
+            if mv.Magnitude>0 then mv=mv.Unit end
+            flyBV.Velocity=mv*spd; flyBG.CFrame=cam.CFrame
+            local h=getHuman()
+            if h and h:GetState()~=Enum.HumanoidStateType.Physics then
+                h:ChangeState(Enum.HumanoidStateType.Physics)
+            end
         end
-    else if flyBV then flyBV:Destroy(); flyBV=nil end; if flyBG then flyBG:Destroy(); flyBG=nil end end
+    else
+        if flyBV then flyBV:Destroy(); flyBV=nil end
+        if flyBG then flyBG:Destroy(); flyBG=nil end
+    end
 end)
 
 task.spawn(function()
@@ -3000,6 +3105,267 @@ task.spawn(function()
     end
 end)
 
+-- Daily quest: fuse farm, raids/rifts (correct presets), optional trials start, claim
+local DAILY_RAID_PATHS={"Boros","Fusion Zamasu (Corrupted)","Heian Era Sukuna","All For One","Dio Over Heaven","Madara Ten Tails","Aizen (Hogyoku)"}
+local function dailyChallengeTitleNeeds(ch,words)
+    if type(ch)~="table" then return false end
+    for title,v in pairs(ch) do
+        local h=tonumber(v and v.Has) or 0
+        local n=tonumber(v and v.Needed) or 1
+        if h<n then
+            local tl=string.lower(tostring(title))
+            local ok=true
+            for wi=1,#words do
+                if not tl:find(words[wi],1,true) then ok=false break end
+            end
+            if ok then return true end
+        end
+    end
+    return false
+end
+local function pickBestBaseForDailyFuse(needGiant,needTitan)
+    if #petNameList==0 then refreshPetCampaignMap() end
+    local bases={}
+    for _,b in ipairs(petNameList) do bases[b]=true end
+    if next(bases)==nil then
+        local dInv=getDInv()
+        if dInv then
+            for _,iv in ipairs(dInv:GetChildren()) do
+                if iv:IsA("IntValue") and iv.Value>0 then
+                    local base=toMergeBaseName(iv.Name)
+                    if base~="" then bases[base]=true end
+                end
+            end
+        end
+    end
+    local best,score=nil,-1e9
+    for base in pairs(bases) do
+        local b=getInvCountByName(base)
+        local g=getInvCountByName("Giant "..base)
+        local m=getInvCountByName("Mega "..base)
+        local sc=b+g*3+m*9
+        if needGiant or needTitan then
+            if m>=4 then sc=sc+5000 elseif g>=4 then sc=sc+3000 elseif b>=4 then sc=sc+1000 end
+        end
+        if sc>score then score,best=sc,base end
+    end
+    return best
+end
+local function selectDailyMergePetName(base,needGiant,needTitan)
+    if not base or base=="" then return nil end
+    if needTitan then
+        if getInvCountByName("Mega "..base)>=4 then return "Mega "..base end
+        if getInvCountByName("Giant "..base)>=4 then return "Giant "..base end
+    end
+    if needGiant or needTitan then
+        if getInvCountByName(base)>=4 then return base end
+    end
+    return nil
+end
+local _dailyDataCache=nil
+local _dailyDataCacheAt=0
+local DAILY_DATA_CACHE_SEC=8
+pcall(function()
+    UpdateDailyInterface.OnClientEvent:Connect(function()
+        _G.AniPixels_DailyQuestRefresh = true
+    end)
+end)
+task.spawn(function()
+    while true do
+        if RUN_GEN~=_G.AniPixels_RunGen then break end
+        if not states.autoDailyQuest then
+            dailyQuestPriorityActive=false
+            _dailyDataCache=nil
+            task.wait(2)
+        else
+            local loopOk,loopErr=pcall(function()
+                local nowFetch=os.clock()
+                local forceFresh=_G.AniPixels_DailyQuestRefresh
+                if forceFresh then _G.AniPixels_DailyQuestRefresh=false end
+                local data
+                if not forceFresh and type(_dailyDataCache)=="table" and (nowFetch-_dailyDataCacheAt)<DAILY_DATA_CACHE_SEC then
+                    data=_dailyDataCache
+                else
+                    data=GetDailyData:InvokeServer()
+                    if type(data)=="table" then
+                        _dailyDataCache=data
+                        _dailyDataCacheAt=nowFetch
+                    end
+                end
+                if type(data)~="table" then
+                    dailyQuestPriorityActive=false
+                    task.wait(18)
+                    return
+                end
+                if data.Claimed==true then
+                    dailyQuestPriorityActive=false
+                    _dailyDataCache=nil
+                    task.wait(90)
+                    return
+                end
+                local ch=data.challenges
+                if type(ch)~="table" or next(ch)==nil then
+                    dailyQuestPriorityActive=false
+                    task.wait(18)
+                    return
+                end
+                local allDone=true
+                for _,v in pairs(ch) do
+                    local h=tonumber(v and v.Has) or 0
+                    local n=tonumber(v and v.Needed) or 1
+                    if h<n then allDone=false break end
+                end
+                dailyQuestPriorityActive=not allDone
+                if allDone then
+                    local okC,success,msg=pcall(function()
+                        return ClaimDailyReward:InvokeServer()
+                    end)
+                    if okC and success==true then
+                        pcall(function() SLbl.Text="📅 Daily reward claimed! "..tostring(msg or "") end)
+                        dailyQuestPriorityActive=false
+                        _dailyDataCache=nil
+                        task.wait(8)
+                    elseif okC then
+                        pcall(function() SLbl.Text="📅 Daily claim: "..tostring(msg or "failed") end)
+                        task.wait(30)
+                    else
+                        task.wait(20)
+                    end
+                    return
+                end
+                if not canRunMode("DailyQuest") then
+                    task.wait(1)
+                    return
+                end
+                if isInBattle() then
+                    task.wait(2)
+                    return
+                end
+                local needGiant=dailyChallengeTitleNeeds(ch,{"fuse","giant"})
+                local needTitan=dailyChallengeTitleNeeds(ch,{"fuse","titan"})
+                local needRaid=dailyChallengeTitleNeeds(ch,{"raid"})
+                local needRift=false
+                for title,v in pairs(ch) do
+                    local h=tonumber(v and v.Has) or 0
+                    local n=tonumber(v and v.Needed) or 1
+                    if h<n then
+                        local tl=string.lower(tostring(title))
+                        if tl:find("rift",1,true) then needRift=true end
+                    end
+                end
+                if needGiant or needTitan then
+                    local base=pickBestBaseForDailyFuse(needGiant,needTitan)
+                    if base then
+                        local mergeName=selectDailyMergePetName(base,needGiant,needTitan)
+                        if mergeName then
+                            pcall(function() SLbl.Text="📅 Daily fuse: "..mergeName end)
+                            local squad=makeMergePayload(mergeName)
+                            pcall(function() RemoteMerge:InvokeServer(squad) end)
+                            task.wait(0.45)
+                            _G.AniPixels_DailyQuestRefresh=true
+                            return
+                        end
+                        pcall(function() SLbl.Text="📅 Daily farm (fuse): "..base end)
+                        applyPresetTeam("Farm")
+                        task.wait(0.2)
+                        local model=findCampaignModelForPet(base)
+                        if model and isPetSpawnedInModel(model,base) then
+                            if not states.farmNoTP then
+                                pcall(function()
+                                    local root=getRoot()
+                                    if root then
+                                        local pos=model:GetModelCFrame().Position
+                                        if (root.Position-pos).Magnitude>30 then
+                                            root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                                            task.wait(0.45)
+                                        end
+                                    end
+                                end)
+                            end
+                            if isPetSpawnedInModel(model,base) then
+                                pcall(function() RequestBattle:FireServer(model) end)
+                                task.wait(1)
+                                return
+                            end
+                        end
+                    end
+                end
+                if needRaid then
+                    for _,path in ipairs(DAILY_RAID_PATHS) do
+                        if isBossPresent(path) and not isBossDead(path) then
+                            applyPresetTeam("Raid")
+                            task.wait(0.2)
+                            local bossModel=nil
+                            pcall(function()
+                                local c=getCampaign()
+                                bossModel=c and c:FindFirstChild(path)
+                            end)
+                            if bossModel then
+                                if not states.bossNoTP then
+                                    pcall(function()
+                                        local root=getRoot()
+                                        if root then
+                                            local pos=bossModel:GetModelCFrame().Position
+                                            if (root.Position-pos).Magnitude>50 then
+                                                root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                                                task.wait(0.5)
+                                            end
+                                        end
+                                    end)
+                                end
+                                pcall(function() SLbl.Text="📅 Daily raid: "..path end)
+                                pcall(function() RequestBattle:FireServer(bossModel) end)
+                                task.wait(autoFightDelay)
+                                return
+                            end
+                        end
+                    end
+                    task.wait(3)
+                    return
+                end
+                if needRift then
+                    local model,petName=getActiveSelectedRiftModel()
+                    if model then
+                        local desired="Rifts"
+                        if states.autoRiftBossTeam and isRiftBossModel(model) then
+                            desired="RiftBosses"
+                        end
+                        applyPresetTeam(desired)
+                        task.wait(0.2)
+                        if not states.riftNoTP then
+                            pcall(function()
+                                local root=getRoot()
+                                if root then
+                                    local pos=model:GetModelCFrame().Position
+                                    if (root.Position-pos).Magnitude>30 then
+                                        root.CFrame=CFrame.new(pos+Vector3.new(0,5,0))
+                                        task.wait(0.45)
+                                    end
+                                end
+                            end)
+                        end
+                        pcall(function() SLbl.Text="📅 Daily rift: "..tostring(petName) end)
+                        pcall(function() RequestBattle:FireServer(model) end)
+                        task.wait(autoFightDelay)
+                        return
+                    end
+                    task.wait(2)
+                    return
+                end
+                local w=12
+                if _G.AniPixels_DailyQuestRefresh then _G.AniPixels_DailyQuestRefresh=false w=4 end
+                task.wait(w)
+            end)
+            if not loopOk then
+                dailyQuestPriorityActive=false
+                statusLastError="DailyQuest: "..tostring(loopErr):sub(1,80)
+                pcall(function() SLbl.Text="⚠ Daily quest check: "..tostring(loopErr):sub(1,50) end)
+                task.wait(20)
+            end
+        end
+    end
+end)
+
 local function buildESP(p)
     if p==LP then return end
     local char=p.Character; if not char then return end
@@ -3030,8 +3396,10 @@ task.spawn(function()
                     end
                 end
             end
+            task.wait(0.65)
+        else
+            task.wait(1.2)
         end
-        task.wait(0.5)
     end
 end)
 -- Apply saved walk speed immediately on load
@@ -3219,9 +3587,6 @@ task.spawn(function()
 end)
 
 -- ── Trials loop ────────────────────────────────────────────────
-local TrialsMode=game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("TrialsMode")
-local BattleResult=game:GetService("ReplicatedStorage"):WaitForChild("Events"):WaitForChild("BattleResult")
-
 task.spawn(function()
     local trialsPreStarted = false
     while true do
@@ -3302,12 +3667,7 @@ task.spawn(function()
                             bossLabelFound=true
                             return
                         end
-                        for _,d in ipairs(bm:GetDescendants()) do
-                            if d.Name=="BossLabel" then
-                                bossLabelFound=true
-                                break
-                            end
-                        end
+                        if bm:FindFirstChild("BossLabel",true)~=nil then bossLabelFound=true end
                     end)
                     if bossLabelFound then return true end
                 end
@@ -3333,12 +3693,7 @@ task.spawn(function()
                         hasBossLabel=true
                         return
                     end
-                    for _,d in ipairs(model:GetDescendants()) do
-                        if d.Name=="BossLabel" then
-                            hasBossLabel=true
-                            break
-                        end
-                    end
+                    if model:FindFirstChild("BossLabel",true)~=nil then hasBossLabel=true end
                 end)
                 return hasBossLabel
             end
